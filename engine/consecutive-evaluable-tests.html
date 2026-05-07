@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Step 3c Tests — Consecutive Evaluable Helper</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; color: #1a1a1a; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 0.5em; }
+    h2 { margin-top: 2em; color: #333; }
+    .test { padding: 0.6em 0.9em; margin: 0.4em 0; border-left: 4px solid #ccc; background: #f8f8f8; font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; }
+    .pass { border-left-color: #2a8c4a; background: #f0f8f2; }
+    .fail { border-left-color: #c0392b; background: #fbeae7; }
+    .summary { padding: 1em; margin: 1.5em 0; font-weight: 600; font-size: 1.1em; border-radius: 4px; }
+    .summary.ok { background: #d4edda; color: #155724; }
+    .summary.bad { background: #f8d7da; color: #721c24; }
+    .label { font-weight: 600; }
+    pre { background: #f0f0f0; padding: 0.4em; overflow-x: auto; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Step 3c — Consecutive Evaluable Helper Tests</h1>
+  <div id="summary"></div>
+  <div id="results"></div>
+
+  <script src="consecutive-evaluable.js"></script>
+  <script>
+  (function () {
+    var CE = window.ConsecutiveEvaluable;
+    var results = [];
+
+    function assertEqual(actual, expected, label) {
+      var pass = JSON.stringify(actual) === JSON.stringify(expected);
+      results.push({
+        pass: pass,
+        label: label,
+        actual: actual,
+        expected: expected
+      });
+    }
+
+    function assertThrows(fn, label) {
+      var threw = false;
+      try { fn(); } catch (e) { threw = true; }
+      results.push({ pass: threw, label: label, actual: threw ? "threw" : "did not throw", expected: "threw" });
+    }
+
+    // -------------------------------------------------------------------------
+    // Test fixtures — minimal WeekRecord shapes
+    // -------------------------------------------------------------------------
+    function evaluable(weekId, points, failedStandards) {
+      return {
+        weekId: weekId,
+        status: "evaluable",
+        points: points,
+        failedStandards: failedStandards || [],
+        passedStandards: []
+      };
+    }
+    function exempt(weekId) {
+      return { weekId: weekId, status: "exempt", exemptJustification: "test" };
+    }
+    function missing(weekId) {
+      return { weekId: weekId, status: "missing" };
+    }
+
+    // -------------------------------------------------------------------------
+    // Predicates used across tests
+    // -------------------------------------------------------------------------
+    var fivePlus = function (wr) { return wr.points >= 5; };
+    var failedNutrition = function (wr) { return wr.failedStandards.indexOf("Nutrition") !== -1; };
+    var anyFailure = function (wr) { return wr.failedStandards.length > 0; };
+    var cleanP1 = function (wr) { return wr.points < 5; };
+    var cleanP3 = function (wr) { return wr.failedStandards.length === 0; };
+    var alwaysTrue = function () { return true; };
+    var alwaysFalse = function () { return false; };
+
+    // =========================================================================
+    // filterEvaluable
+    // =========================================================================
+    (function () {
+      var t = [
+        evaluable("CW01", 0),
+        exempt("CW02"),
+        missing("CW03"),
+        evaluable("CW04", 5)
+      ];
+      var got = CE.filterEvaluable(t);
+      assertEqual(got.length, 2, "filterEvaluable: returns only evaluable count");
+      assertEqual(got.map(function (w) { return w.weekId; }), ["CW01", "CW04"], "filterEvaluable: preserves order");
+
+      assertEqual(CE.filterEvaluable([]), [], "filterEvaluable: empty timeline");
+      assertEqual(CE.filterEvaluable([exempt("CW01"), missing("CW02")]), [], "filterEvaluable: no evaluables present");
+
+      assertThrows(function () { CE.filterEvaluable("not an array"); }, "filterEvaluable: throws on non-array");
+    })();
+
+    // =========================================================================
+    // countConsecutiveFromEnd — basic cases
+    // =========================================================================
+    (function () {
+      // Empty timeline
+      assertEqual(CE.countConsecutiveFromEnd([], fivePlus), 0, "count: empty timeline -> 0");
+
+      // No evaluable weeks
+      assertEqual(CE.countConsecutiveFromEnd([exempt("CW01"), missing("CW02")], fivePlus), 0,
+        "count: only exempt/missing -> 0");
+
+      // 3 consecutive 5+ weeks (P1 trigger scenario)
+      var p1 = [evaluable("CW01", 5), evaluable("CW02", 6), evaluable("CW03", 5)];
+      assertEqual(CE.countConsecutiveFromEnd(p1, fivePlus), 3, "count: 3 consecutive 5+ weeks");
+
+      // Single most recent week fails predicate -> 0
+      var t = [evaluable("CW01", 5), evaluable("CW02", 5), evaluable("CW03", 2)];
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus), 0, "count: most recent fails -> 0");
+
+      // Mixed: 2 recent 5+, then a 3 pt week, then more 5+
+      // Should stop at the 3pt week and only count the 2 recent
+      var mixed = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 6),
+        evaluable("CW03", 3), // breaks streak
+        evaluable("CW04", 5),
+        evaluable("CW05", 5)
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(mixed, fivePlus), 2, "count: streak stops at first failure walking back");
+    })();
+
+    // =========================================================================
+    // countConsecutiveFromEnd — exempt and missing skipping
+    // =========================================================================
+    (function () {
+      // From the docs, the canonical example:
+      // Week 1 Nutrition fails / Week 2 Nutrition fails / Week 3 Exempt
+      // / Week 4 Nutrition fails / Week 5 Nutrition fails
+      // -> Counts as 4 "consecutive" Nutrition failures
+      var canonical = [
+        evaluable("CW01", 2, ["Nutrition"]),
+        evaluable("CW02", 2, ["Nutrition"]),
+        exempt("CW03"),
+        evaluable("CW04", 2, ["Nutrition"]),
+        evaluable("CW05", 2, ["Nutrition"])
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(canonical, failedNutrition), 4,
+        "count: canonical exempt-in-middle example -> 4");
+
+      // Same but with missing instead of exempt
+      var withMissing = [
+        evaluable("CW01", 2, ["Nutrition"]),
+        evaluable("CW02", 2, ["Nutrition"]),
+        missing("CW03"),
+        evaluable("CW04", 2, ["Nutrition"]),
+        evaluable("CW05", 2, ["Nutrition"])
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(withMissing, failedNutrition), 4,
+        "count: missing in middle skipped same as exempt -> 4");
+
+      // Multiple exempts/missing back to back, all skipped
+      var burst = [
+        evaluable("CW01", 5),
+        exempt("CW02"),
+        missing("CW03"),
+        exempt("CW04"),
+        evaluable("CW05", 5)
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(burst, fivePlus), 2,
+        "count: streak across multiple exempt/missing in row");
+
+      // Exempt at the very end (most recent week is exempt)
+      var endExempt = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 5),
+        exempt("CW03")
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(endExempt, fivePlus), 2,
+        "count: most recent week exempt, skipped, streak counted");
+
+      // Exempt at start (oldest)
+      var startExempt = [
+        exempt("CW01"),
+        evaluable("CW02", 5),
+        evaluable("CW03", 5)
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(startExempt, fivePlus), 2,
+        "count: exempt at start does not affect count");
+    })();
+
+    // =========================================================================
+    // countConsecutiveFromEnd — endIndex option
+    // =========================================================================
+    (function () {
+      var t = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 5),
+        evaluable("CW03", 5),
+        evaluable("CW04", 2), // breaks any 5+ streak ending at CW04 or later
+        evaluable("CW05", 5)
+      ];
+
+      // Default endIndex = end -> only CW05 matches
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus), 1,
+        "count: default endIndex counts only most recent");
+
+      // endIndex = 2 (CW03) -> 3 consecutive 5+ weeks ending at CW03
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus, { endIndex: 2 }), 3,
+        "count: endIndex=2 returns 3 consecutive 5+");
+
+      // endIndex = 3 (CW04, which fails) -> 0
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus, { endIndex: 3 }), 0,
+        "count: endIndex on a non-matching week -> 0");
+
+      // endIndex = 0 (only CW01 in scope) -> 1
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus, { endIndex: 0 }), 1,
+        "count: endIndex=0 looks at only first element");
+
+      // endIndex out of range -> throws
+      assertThrows(function () {
+        CE.countConsecutiveFromEnd(t, fivePlus, { endIndex: 99 });
+      }, "count: endIndex out of range throws");
+
+      assertThrows(function () {
+        CE.countConsecutiveFromEnd(t, fivePlus, { endIndex: -1 });
+      }, "count: negative endIndex throws");
+    })();
+
+    // =========================================================================
+    // countConsecutiveFromEnd — maxLookback option
+    // =========================================================================
+    (function () {
+      var t = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 5),
+        evaluable("CW03", 5),
+        evaluable("CW04", 5),
+        evaluable("CW05", 5)
+      ];
+
+      // Without cap: all 5
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus), 5, "count: no maxLookback -> full streak");
+
+      // With cap of 3: only counts up to 3 evaluables
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus, { maxLookback: 3 }), 3,
+        "count: maxLookback caps the count");
+
+      // maxLookback bigger than timeline: no effect
+      assertEqual(CE.countConsecutiveFromEnd(t, fivePlus, { maxLookback: 100 }), 5,
+        "count: maxLookback > timeline length acts like no cap");
+
+      // maxLookback skips exempt and missing in the cap
+      // Cap = 3 evaluables, so exempts in between don't burn the budget
+      var withGaps = [
+        evaluable("CW01", 5),
+        exempt("CW02"),
+        evaluable("CW03", 5),
+        missing("CW04"),
+        evaluable("CW05", 5)
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(withGaps, fivePlus, { maxLookback: 3 }), 3,
+        "count: maxLookback applies to evaluable count, not raw scan");
+    })();
+
+    // =========================================================================
+    // takeConsecutiveFromEnd
+    // =========================================================================
+    (function () {
+      // Empty
+      assertEqual(CE.takeConsecutiveFromEnd([], fivePlus), [], "take: empty timeline -> []");
+
+      // 3 consecutive 5+ — returns oldest first
+      var p1 = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 6),
+        evaluable("CW03", 7)
+      ];
+      var got = CE.takeConsecutiveFromEnd(p1, fivePlus);
+      assertEqual(got.map(function (w) { return w.weekId; }), ["CW01", "CW02", "CW03"],
+        "take: returns chronological order (oldest -> newest)");
+
+      // Mixed with exempt — exempt skipped, evaluables collected in chrono order
+      var canonical = [
+        evaluable("CW01", 2, ["Nutrition"]),
+        evaluable("CW02", 2, ["Nutrition"]),
+        exempt("CW03"),
+        evaluable("CW04", 2, ["Nutrition"]),
+        evaluable("CW05", 2, ["Nutrition"])
+      ];
+      var canonGot = CE.takeConsecutiveFromEnd(canonical, failedNutrition);
+      assertEqual(canonGot.map(function (w) { return w.weekId; }),
+        ["CW01", "CW02", "CW04", "CW05"],
+        "take: skips exempt and returns chrono order");
+
+      // Streak interrupted
+      var interrupted = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 2), // breaks streak going back from CW04
+        evaluable("CW03", 5),
+        evaluable("CW04", 5)
+      ];
+      var intGot = CE.takeConsecutiveFromEnd(interrupted, fivePlus);
+      assertEqual(intGot.map(function (w) { return w.weekId; }), ["CW03", "CW04"],
+        "take: stops at first non-matching evaluable");
+
+      // Most recent fails -> empty list
+      var noMatch = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 5),
+        evaluable("CW03", 2)
+      ];
+      assertEqual(CE.takeConsecutiveFromEnd(noMatch, fivePlus), [],
+        "take: most recent fails -> []");
+
+      // Useful for Slack templates: the LAST element is most recent
+      var slackCase = [
+        evaluable("CW01", 5, ["Nutrition", "Training"]),
+        evaluable("CW02", 6, ["Nutrition"])
+      ];
+      var slackGot = CE.takeConsecutiveFromEnd(slackCase, fivePlus);
+      assertEqual(slackGot[slackGot.length - 1].failedStandards, ["Nutrition"],
+        "take: last element is most recent (for standards_list_recent)");
+      assertEqual(slackGot[slackGot.length - 2].failedStandards, ["Nutrition", "Training"],
+        "take: second-to-last is previous week (for standards_list_previous)");
+    })();
+
+    // =========================================================================
+    // lastNEvaluableMatch
+    // =========================================================================
+    (function () {
+      // Empty -> false for any n
+      assertEqual(CE.lastNEvaluableMatch([], 1, alwaysTrue), false,
+        "lastN: empty timeline -> false");
+      assertEqual(CE.lastNEvaluableMatch([], 5, alwaysTrue), false,
+        "lastN: empty timeline -> false (n=5)");
+
+      // Fewer evaluable weeks than n -> false (reset semantics)
+      var oneWeek = [evaluable("CW01", 0)];
+      assertEqual(CE.lastNEvaluableMatch(oneWeek, 2, cleanP1), false,
+        "lastN: 1 evaluable, asking for 2 -> false (reset cannot fire)");
+
+      // Exactly n evaluable weeks, all match -> true
+      var twoCleanWeeks = [evaluable("CW01", 0), evaluable("CW02", 1)];
+      assertEqual(CE.lastNEvaluableMatch(twoCleanWeeks, 2, cleanP1), true,
+        "lastN: exactly n evaluables, all clean -> true");
+
+      // 2 most recent are clean but the third-most-recent is not — n=2 should still pass
+      var p1Reset = [
+        evaluable("CW01", 5),  // crisis
+        evaluable("CW02", 0),  // clean
+        evaluable("CW03", 1)   // clean — most recent
+      ];
+      assertEqual(CE.lastNEvaluableMatch(p1Reset, 2, cleanP1), true,
+        "lastN: P1 reset scenario -> 2 consecutive clean weeks at end");
+
+      // P1 reset blocked: only most recent is clean, the one before still has 5+
+      var partialReset = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 5),
+        evaluable("CW03", 0)
+      ];
+      assertEqual(CE.lastNEvaluableMatch(partialReset, 2, cleanP1), false,
+        "lastN: only 1 of last 2 is clean -> false (single clean week does not reset)");
+
+      // Exempt/missing skipped — the "last 2 evaluable" can stretch across gaps
+      var withGap = [
+        evaluable("CW01", 0),
+        exempt("CW02"),
+        missing("CW03"),
+        evaluable("CW04", 0)
+      ];
+      assertEqual(CE.lastNEvaluableMatch(withGap, 2, cleanP1), true,
+        "lastN: last 2 evaluables span across exempt and missing");
+
+      // P3 reset (no failure in any standard for last 2 evaluable weeks)
+      var p3Reset = [
+        evaluable("CW01", 2, ["Movement"]),
+        evaluable("CW02", 0, []),
+        evaluable("CW03", 0, [])
+      ];
+      assertEqual(CE.lastNEvaluableMatch(p3Reset, 2, cleanP3), true,
+        "lastN: P3 reset with 2 clean evaluable weeks");
+
+      // n=1 edge — just checks the most recent evaluable
+      var singleCheck = [
+        evaluable("CW01", 5),
+        evaluable("CW02", 0)
+      ];
+      assertEqual(CE.lastNEvaluableMatch(singleCheck, 1, cleanP1), true,
+        "lastN: n=1 only checks most recent");
+
+      // endIndex respected
+      var withEndIdx = [
+        evaluable("CW01", 0),
+        evaluable("CW02", 0),
+        evaluable("CW03", 5)
+      ];
+      // At endIndex=1, the last 2 evaluables are CW01+CW02, both clean
+      assertEqual(CE.lastNEvaluableMatch(withEndIdx, 2, cleanP1, { endIndex: 1 }), true,
+        "lastN: endIndex respected (look back from CW02)");
+      // At endIndex=2 (default), most recent is CW03 with 5+, not clean
+      assertEqual(CE.lastNEvaluableMatch(withEndIdx, 2, cleanP1), false,
+        "lastN: default endIndex captures most recent failure");
+
+      // Validation
+      assertThrows(function () { CE.lastNEvaluableMatch([], 0, alwaysTrue); },
+        "lastN: n=0 throws");
+      assertThrows(function () { CE.lastNEvaluableMatch([], -1, alwaysTrue); },
+        "lastN: negative n throws");
+      assertThrows(function () { CE.lastNEvaluableMatch([], 1.5, alwaysTrue); },
+        "lastN: non-integer n throws");
+    })();
+
+    // =========================================================================
+    // Real pathway scenarios (integration-style cases)
+    // =========================================================================
+    (function () {
+      // P1 Yellow trigger: 1 week of 5+ pts, evaluating most recent closed week
+      var p1Yellow = [evaluable("CW19", 5)];
+      assertEqual(CE.countConsecutiveFromEnd(p1Yellow, fivePlus), 1,
+        "scenario P1 Yellow: 1 week of 5+ -> count=1");
+
+      // P1 Red trigger: 3 consecutive 5+ weeks
+      var p1Red = [
+        evaluable("CW17", 5),
+        evaluable("CW18", 6),
+        evaluable("CW19", 5)
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(p1Red, fivePlus), 3,
+        "scenario P1 Red: 3 consecutive 5+ -> count=3");
+
+      // P2 Yellow trigger: same standard fails 2 weeks (Nutrition)
+      var p2Yellow = [
+        evaluable("CW18", 2, ["Nutrition"]),
+        evaluable("CW19", 2, ["Nutrition"])
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(p2Yellow, failedNutrition), 2,
+        "scenario P2 Yellow Nutrition: count=2");
+
+      // P2 Red trigger: 4 consecutive Nutrition failures
+      var p2Red = [
+        evaluable("CW16", 2, ["Nutrition"]),
+        evaluable("CW17", 4, ["Nutrition", "Training"]),
+        evaluable("CW18", 2, ["Nutrition"]),
+        evaluable("CW19", 2, ["Nutrition"])
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(p2Red, failedNutrition), 4,
+        "scenario P2 Red Nutrition: 4 consecutive -> count=4");
+
+      // P3 trigger: 3 consecutive weeks with ANY failure (different standards)
+      var p3Yellow = [
+        evaluable("CW17", 2, ["Training"]),
+        evaluable("CW18", 2, ["Nutrition"]),
+        evaluable("CW19", 2, ["Movement"])
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(p3Yellow, anyFailure), 3,
+        "scenario P3 Yellow: 3 consecutive different failures -> count=3");
+
+      // Black flag counter: 6 consecutive Green evaluable weeks
+      var blackFlagCleared = [
+        evaluable("CW14", 0, []),
+        evaluable("CW15", 0, []),
+        evaluable("CW16", 0, []),
+        evaluable("CW17", 0, []),
+        evaluable("CW18", 0, []),
+        evaluable("CW19", 0, [])
+      ];
+      // "Green evaluable" predicate: zero points and zero failures
+      var isGreen = function (wr) { return wr.points === 0 && wr.failedStandards.length === 0; };
+      assertEqual(CE.countConsecutiveFromEnd(blackFlagCleared, isGreen), 6,
+        "scenario Black flag: 6 consecutive Green weeks");
+
+      // Black flag NOT cleared: a Yellow week broke the streak 2 weeks ago
+      var blackFlagBroken = [
+        evaluable("CW14", 0, []),
+        evaluable("CW15", 0, []),
+        evaluable("CW16", 0, []),
+        evaluable("CW17", 5, ["Nutrition"]), // Yellow -> resets counter
+        evaluable("CW18", 0, []),
+        evaluable("CW19", 0, [])
+      ];
+      assertEqual(CE.countConsecutiveFromEnd(blackFlagBroken, isGreen), 2,
+        "scenario Black flag broken: counter only counts streak after reset");
+    })();
+
+    // =========================================================================
+    // Render results
+    // =========================================================================
+    var pass = results.filter(function (r) { return r.pass; }).length;
+    var fail = results.length - pass;
+
+    var summary = document.getElementById("summary");
+    summary.className = "summary " + (fail === 0 ? "ok" : "bad");
+    summary.textContent = pass + " passed / " + fail + " failed (total " + results.length + ")";
+
+    var container = document.getElementById("results");
+    var currentSection = null;
+
+    results.forEach(function (r) {
+      var div = document.createElement("div");
+      div.className = "test " + (r.pass ? "pass" : "fail");
+      var icon = r.pass ? "PASS" : "FAIL";
+      div.innerHTML = "<span class='label'>" + icon + "</span> " + r.label;
+      if (!r.pass) {
+        div.innerHTML += "<pre>expected: " + JSON.stringify(r.expected) +
+          "\nactual:   " + JSON.stringify(r.actual) + "</pre>";
+      }
+      container.appendChild(div);
+    });
+  })();
+  </script>
+</body>
+</html>
