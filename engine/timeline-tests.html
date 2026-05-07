@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Flag System Engine — Timeline Tests (Step 3b)</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #f7f7f7; color: #222; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+    .meta { color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    button { background: #1f6feb; color: white; border: 0; padding: 0.6rem 1.2rem; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+    button:hover { background: #1858c4; }
+    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; line-height: 1.4; max-height: 70vh; overflow-y: auto; }
+    .summary-pass { color: #2ea043; font-weight: 600; }
+    .summary-fail { color: #cf222e; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Flag System Engine — Timeline Tests (Step 3b)</h1>
+  <div class="meta">Tests for <code>client-timeline.js</code>. Depends on <code>coaching-week.js</code>.</div>
+
+  <button id="run">Run tests</button>
+  <pre id="output">Press "Run tests" to execute the suite.</pre>
+
+  <script type="module">
+    import { runTimelineTests } from './timeline-tests.js';
+
+    const output = document.getElementById('output');
+
+    // Redirect console.log/error to the pre
+    const origLog = console.log;
+    const origErr = console.error;
+    let buffer = '';
+    function captureStart() {
+      buffer = '';
+      console.log = (...args) => { buffer += args.join(' ') + '\n'; origLog(...args); };
+      console.error = (...args) => { buffer += args.join(' ') + '\n'; origErr(...args); };
+    }
+    function captureEnd() {
+      console.log = origLog;
+      console.error = origErr;
+    }
+
+    document.getElementById('run').addEventListener('click', () => {
+      captureStart();
+      let result;
+      try {
+        result = runTimelineTests();
+      } catch (e) {
+        buffer += '\nFATAL: ' + e.message + '\n' + e.stack;
+      }
+      captureEnd();
+
+      output.textContent = buffer;
+      if (result) {
+        const status = result.failed === 0
+          ? `<span class="summary-pass">✓ All ${result.passed} tests passed</span>`
+          : `<span class="summary-fail">✗ ${result.failed} of ${result.passed + result.failed} tests failed</span>`;
+        output.insertAdjacentHTML('beforebegin', `<div style="margin: 1rem 0;">${status}</div>`);
+      }
+    });
+  </script>
+</body>
+</html>
