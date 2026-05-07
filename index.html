@@ -179,26 +179,40 @@ const DATA_WINDOW_WEEKS = 16;
 let rosterRaw = [];
 let formResponsesRaw = [];
 
-// ─── ISO WEEK HELPERS ────────────────────────────────────────────────────────
-function getISOWeek(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+// ─── COACHING WEEK HELPERS ───────────────────────────────────────────────────
+// Coaching Week runs Friday 12:00am to Thursday 11:59:59pm.
+// The week is labeled with the ISO week number that contains its closing Thursday.
+// Example: Coaching Week running Fri May 1 → Thu May 7, 2026 is labeled CW19
+// (because Thu May 7, 2026 falls in ISO week 19).
+
+function getCoachingWeekRange(date) {
+  // Returns { start, end } for the Coaching Week containing the given date.
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  // getDay(): Sun=0, Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6
+  // We want to walk back to the most recent Friday (or stay if today is Friday).
+  const day = d.getDay();
+  const daysSinceFriday = (day - 5 + 7) % 7; // Fri=0, Sat=1, Sun=2, Mon=3, Tue=4, Wed=5, Thu=6
+  const start = new Date(d);
+  start.setDate(d.getDate() - daysSinceFriday);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6); // Friday + 6 = Thursday
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function getCoachingWeek(date) {
+  // Returns { year, week } using ISO week numbering of the closing Thursday.
+  const range = getCoachingWeekRange(date);
+  const thursday = range.end;
+  // Standard ISO week calculation on the Thursday.
+  const d = new Date(Date.UTC(thursday.getFullYear(), thursday.getMonth(), thursday.getDate()));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   return { year: d.getUTCFullYear(), week: weekNum };
-}
-
-function getISOWeekRange(date) {
-  const d = new Date(date);
-  const day = d.getDay() || 7;
-  const monday = new Date(d);
-  monday.setDate(d.getDate() - day + 1);
-  monday.setHours(0, 0, 0, 0);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-  return { start: monday, end: sunday };
 }
 
 function fmtMonthDay(date) {
@@ -265,10 +279,10 @@ async function init() {
 // ─── RENDER ──────────────────────────────────────────────────────────────────
 function render() {
   const now = new Date();
-  const iso = getISOWeek(now);
-  const range = getISOWeekRange(now);
-  document.getElementById('week-id').textContent = `W${String(iso.week).padStart(2,'0')}`;
-  document.getElementById('week-range').textContent = `${fmtMonthDay(range.start)}–${fmtMonthDay(range.end)}, ${iso.year}`;
+  const cw = getCoachingWeek(now);
+  const range = getCoachingWeekRange(now);
+  document.getElementById('week-id').textContent = `CW${String(cw.week).padStart(2,'0')}`;
+  document.getElementById('week-range').textContent = `${fmtMonthDay(range.start)}–${fmtMonthDay(range.end)}, ${cw.year}`;
 
   document.getElementById('stat-roster').textContent = rosterRaw.length;
   document.getElementById('stat-forms').textContent = formResponsesRaw.length;
