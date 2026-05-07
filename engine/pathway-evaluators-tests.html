@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Step 3d Tests — Pathway Evaluators (P1, P2, P3)</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; color: #1a1a1a; }
+    h1 { border-bottom: 2px solid #333; padding-bottom: 0.5em; }
+    h2 { margin-top: 2em; color: #333; }
+    .test { padding: 0.6em 0.9em; margin: 0.4em 0; border-left: 4px solid #ccc; background: #f8f8f8; font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; }
+    .pass { border-left-color: #2a8c4a; background: #f0f8f2; }
+    .fail { border-left-color: #c0392b; background: #fbeae7; }
+    .summary { padding: 1em; margin: 1.5em 0; font-weight: 600; font-size: 1.1em; border-radius: 4px; }
+    .summary.ok { background: #d4edda; color: #155724; }
+    .summary.bad { background: #f8d7da; color: #721c24; }
+    .label { font-weight: 600; }
+    pre { background: #f0f0f0; padding: 0.4em; overflow-x: auto; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Step 3d — Pathway Evaluators Tests</h1>
+  <div id="summary"></div>
+  <div id="results"></div>
+
+  <script src="consecutive-evaluable.js"></script>
+  <script src="pathway-evaluators.js"></script>
+  <script>
+  (function () {
+    var PE = window.PathwayEvaluators;
+    var results = [];
+
+    function assertEqual(actual, expected, label) {
+      var pass = JSON.stringify(actual) === JSON.stringify(expected);
+      results.push({
+        pass: pass,
+        label: label,
+        actual: actual,
+        expected: expected
+      });
+    }
+
+    function assertTruthy(actual, label) {
+      var pass = !!actual;
+      results.push({
+        pass: pass,
+        label: label,
+        actual: actual,
+        expected: "truthy"
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Test fixtures — minimal WeekRecord shapes
+    //
+    // Standard names match the WeekRecord output of Step 3b
+    // (client-timeline.js): "Check-In Submission", "Training Adherence",
+    // "Nutrition Adherence", "Movement Target", "Technique Feedback".
+    // -------------------------------------------------------------------------
+    var STANDARD_POINTS = {
+      "Check-In Submission": 5,
+      "Training Adherence": 2,
+      "Nutrition Adherence": 2,
+      "Movement Target": 2,
+      "Technique Feedback": 1
+    };
+
+    var _wk = 0;
+    function nextWeekId() {
+      _wk++;
+      var n = _wk < 10 ? "0" + _wk : "" + _wk;
+      return "2026-CW" + n;
+    }
+    function resetWeekIds() { _wk = 0; }
+
+    function evaluable(failedStandards, opts) {
+      failedStandards = failedStandards || [];
+      opts = opts || {};
+      var points = 0;
+      for (var i = 0; i < failedStandards.length; i++) {
+        points += STANDARD_POINTS[failedStandards[i]] || 0;
+      }
+      if (opts.pointsOverride !== undefined) points = opts.pointsOverride;
+      return {
+        weekId: nextWeekId(),
+        status: "evaluable",
+        points: points,
+        failedStandards: failedStandards.slice(),
+        passedStandards: [],
+        callRequested: opts.callRequested || null,
+        notes: null,
+        loomLink: null
+      };
+    }
+    function exempt() {
+      return { weekId: nextWeekId(), status: "exempt", exemptJustification: "test" };
+    }
+    function missing() {
+      return { weekId: nextWeekId(), status: "missing" };
+    }
+    function clean() {
+      return evaluable([]);
+    }
+
+    // =========================================================================
+    // P1 — Acute Crisis
+    // =========================================================================
+    (function () {
+      resetWeekIds();
+
+      // Empty timeline
+      (function () {
+        var r = PE.evaluateP1([]);
+        assertEqual(r.streakLength, 0, "P1 empty: streakLength=0");
+        assertEqual(r.active, false, "P1 empty: not active");
+        assertEqual(r.expectedAction, null, "P1 empty: no action");
+        assertEqual(r.resetReady, false, "P1 empty: resetReady=false");
+        assertEqual(r.streakWeeks, [], "P1 empty: streakWeeks=[]");
+        assertEqual(r.templateData, null, "P1 empty: templateData=null");
+      })();
+
+      // Single clean week
+      (function () {
+        var r = PE.evaluateP1([clean()]);
+        assertEqual(r.streakLength, 0, "P1 single clean: streak=0");
+        assertEqual(r.active, false, "P1 single clean: inactive");
+        assertEqual(r.resetReady, false, "P1 single clean: resetReady=false (need 2)");
+      })();
+
+      // Single 5+ week (Notification trigger)
+      (function () {
+        var r = PE.evaluateP1([evaluable(["Check-In Submission"])]);
+        assertEqual(r.streakLength, 1, "P1 streak=1: length");
+        assertEqual(r.active, true, "P1 streak=1: active");
+        assertEqual(r.expectedAction, "Notification", "P1 streak=1: Notification");
+        assertEqual(r.weekOfPathway, 1, "P1 streak=1: weekOfPathway");
+        assertTruthy(r.templateData, "P1 streak=1: templateData populated");
+        assertEqual(r.templateData.standards_list_recent, ["Check-In Submission"], "P1 streak=1: recent");
+        assertEqual(r.templateData.standards_list_previous, [], "P1 streak=1: previous=[]");
+      })();
+
+      // Two consecutive 5+ weeks (Warning trigger)
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          evaluable(["Nutrition Adherence", "Training Adherence", "Movement Target"])
+        ]);
+        assertEqual(r.streakLength, 2, "P1 streak=2: length");
+        assertEqual(r.expectedAction, "Warning", "P1 streak=2: Warning");
+        assertEqual(r.templateData.standards_list_recent,
+          ["Nutrition Adherence", "Training Adherence", "Movement Target"], "P1 streak=2: recent");
+        assertEqual(r.templateData.standards_list_previous,
+          ["Check-In Submission"], "P1 streak=2: previous");
+      })();
+
+      // Three consecutive 5+ weeks (RedWindow)
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"])
+        ]);
+        assertEqual(r.streakLength, 3, "P1 streak=3: length");
+        assertEqual(r.expectedAction, "RedWindow", "P1 streak=3: RedWindow");
+      })();
+
+      // Streak beyond Red threshold still emits RedWindow (no PostRed in 3d)
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"])
+        ]);
+        assertEqual(r.streakLength, 5, "P1 streak=5: length");
+        assertEqual(r.expectedAction, "RedWindow", "P1 streak=5: still RedWindow");
+      })();
+
+      // Streak broken by clean week mid-history
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          clean(),
+          evaluable(["Check-In Submission"])
+        ]);
+        assertEqual(r.streakLength, 1, "P1 with mid-clean: streak resets to 1");
+        assertEqual(r.expectedAction, "Notification", "P1 with mid-clean: Notification");
+      })();
+
+      // Exempt mid-streak preserves consecutivity
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          exempt(),
+          evaluable(["Check-In Submission"])
+        ]);
+        assertEqual(r.streakLength, 3, "P1 with exempt mid: streak=3 (exempt skipped)");
+        assertEqual(r.expectedAction, "RedWindow", "P1 with exempt mid: RedWindow");
+      })();
+
+      // Missing mid-streak preserves consecutivity
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          missing(),
+          evaluable(["Check-In Submission"])
+        ]);
+        assertEqual(r.streakLength, 2, "P1 with missing mid: streak=2");
+      })();
+
+      // Reset triggered: 2 consecutive clean weeks at end
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          clean(),
+          clean()
+        ]);
+        assertEqual(r.streakLength, 0, "P1 after 2 clean: streak=0");
+        assertEqual(r.active, false, "P1 after 2 clean: inactive");
+        assertEqual(r.resetReady, true, "P1 after 2 clean: resetReady=true");
+      })();
+
+      // Single clean week does NOT reset
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          clean()
+        ]);
+        assertEqual(r.resetReady, false, "P1 single clean: resetReady=false");
+      })();
+
+      // Exempt does not count as a clean week for reset
+      (function () {
+        var r = PE.evaluateP1([
+          evaluable(["Check-In Submission"]),
+          clean(),
+          exempt()
+        ]);
+        assertEqual(r.resetReady, false, "P1 exempt then clean: resetReady=false (only 1 evaluable clean)");
+      })();
+
+      // Sub-5 failure does NOT count for P1
+      (function () {
+        var r = PE.evaluateP1([evaluable(["Nutrition Adherence", "Training Adherence"])]); // 4 pts
+        assertEqual(r.streakLength, 0, "P1 sub-5 failure: streak=0");
+        assertEqual(r.active, false, "P1 sub-5 failure: inactive");
+      })();
+
+      // endIndex respected
+      (function () {
+        var tl = [
+          evaluable(["Check-In Submission"]),
+          evaluable(["Check-In Submission"]),
+          clean(),
+          clean()
+        ];
+        var r = PE.evaluateP1(tl, { endIndex: 1 });
+        assertEqual(r.streakLength, 2, "P1 endIndex=1: streak=2 at that point");
+        assertEqual(r.expectedAction, "Warning", "P1 endIndex=1: Warning");
+      })();
+    })();
+
+    // =========================================================================
+    // P2 — Same Standard Fails Repeatedly
+    // =========================================================================
+    (function () {
+      resetWeekIds();
+
+      // Empty timeline returns empty array
+      (function () {
+        assertEqual(PE.evaluateP2([]), [], "P2 empty: returns []");
+      })();
+
+      // No failures returns empty array (filter rule: streak >= 1)
+      (function () {
+        assertEqual(PE.evaluateP2([clean(), clean()]), [], "P2 all clean: returns []");
+      })();
+
+      // Single Nutrition failure: surfaces Nutrition only, inactive (streak<2)
+      (function () {
+        var r = PE.evaluateP2([evaluable(["Nutrition Adherence"])]);
+        assertEqual(r.length, 1, "P2 single Nutrition fail: 1 entry");
+        assertEqual(r[0].standard, "Nutrition Adherence", "P2 single: standard");
+        assertEqual(r[0].streakLength, 1, "P2 single: streak=1");
+        assertEqual(r[0].active, false, "P2 single: inactive (need 2)");
+        assertEqual(r[0].expectedAction, null, "P2 single: no action");
+        assertEqual(r[0].templateData, null, "P2 single: templateData=null (sub-trigger)");
+      })();
+
+      // 2 consecutive Nutrition failures (Notification trigger)
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"])
+        ]);
+        assertEqual(r.length, 1, "P2 streak=2: 1 entry");
+        assertEqual(r[0].streakLength, 2, "P2 streak=2: length");
+        assertEqual(r[0].active, true, "P2 streak=2: active");
+        assertEqual(r[0].expectedAction, "Notification", "P2 streak=2: Notification");
+        assertTruthy(r[0].templateData, "P2 streak=2: templateData populated");
+        assertEqual(r[0].templateData.standard, "Nutrition Adherence", "P2 streak=2: templateData.standard");
+      })();
+
+      // 3 consecutive Nutrition failures (Warning)
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"])
+        ]);
+        assertEqual(r[0].streakLength, 3, "P2 streak=3: length");
+        assertEqual(r[0].expectedAction, "Warning", "P2 streak=3: Warning");
+      })();
+
+      // 4 consecutive Nutrition failures (RedWindow)
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"])
+        ]);
+        assertEqual(r[0].streakLength, 4, "P2 streak=4: length");
+        assertEqual(r[0].expectedAction, "RedWindow", "P2 streak=4: RedWindow");
+      })();
+
+      // Multiple standards simultaneously
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence", "Training Adherence"]),
+          evaluable(["Nutrition Adherence", "Training Adherence"]),
+          evaluable(["Nutrition Adherence", "Training Adherence"])
+        ]);
+        assertEqual(r.length, 2, "P2 multi-standard: 2 entries");
+        var standards = r.map(function (e) { return e.standard; }).sort();
+        assertEqual(standards, ["Nutrition Adherence", "Training Adherence"],
+          "P2 multi: both standards present");
+        for (var i = 0; i < r.length; i++) {
+          assertEqual(r[i].streakLength, 3, "P2 multi: each streak=3");
+          assertEqual(r[i].expectedAction, "Warning", "P2 multi: each Warning");
+        }
+      })();
+
+      // Standard fails then stops; another standard starts failing
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          evaluable(["Training Adherence"])
+        ]);
+        assertEqual(r.length, 1, "P2 sequential: only Training surfaces");
+        assertEqual(r[0].standard, "Training Adherence", "P2 sequential: Training is current");
+        assertEqual(r[0].streakLength, 2, "P2 sequential: Training streak=2");
+      })();
+
+      // Exempt skipped: Nutrition fails W1, exempt W2, Nutrition fails W3 -> streak=2
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence"]),
+          exempt(),
+          evaluable(["Nutrition Adherence"])
+        ]);
+        assertEqual(r.length, 1, "P2 with exempt: Nutrition entry");
+        assertEqual(r[0].streakLength, 2, "P2 with exempt: streak=2 (exempt skipped)");
+      })();
+
+      // Reset: standard not in failedStandards on most recent weeks
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          evaluable([])
+        ]);
+        assertEqual(r.length, 0, "P2 after reset: no entries (all standards clean now)");
+      })();
+
+      // Failed standards differ each week
+      (function () {
+        var r = PE.evaluateP2([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          evaluable(["Movement Target"])
+        ]);
+        assertEqual(r.length, 1, "P2 rotating standards: only most recent surfaces");
+        assertEqual(r[0].standard, "Movement Target", "P2 rotating: Movement is current");
+        assertEqual(r[0].streakLength, 1, "P2 rotating: Movement streak=1");
+        assertEqual(r[0].active, false, "P2 rotating: inactive (sub-trigger)");
+      })();
+
+      // P2 array order matches STANDARDS constant order
+      (function () {
+        var allStds = [
+          "Check-In Submission",
+          "Training Adherence",
+          "Nutrition Adherence",
+          "Movement Target",
+          "Technique Feedback"
+        ];
+        var r = PE.evaluateP2([
+          evaluable(allStds, { pointsOverride: 12 }),
+          evaluable(allStds, { pointsOverride: 12 })
+        ]);
+        assertEqual(r.length, 5, "P2 all 5 failing: 5 entries");
+        var order = r.map(function (e) { return e.standard; });
+        assertEqual(order, allStds, "P2 order matches STANDARDS constant");
+      })();
+    })();
+
+    // =========================================================================
+    // P3 — Persistent Inconsistency
+    // =========================================================================
+    (function () {
+      resetWeekIds();
+
+      // Empty
+      (function () {
+        var r = PE.evaluateP3([]);
+        assertEqual(r.streakLength, 0, "P3 empty: streak=0");
+        assertEqual(r.active, false, "P3 empty: inactive");
+      })();
+
+      // 1 week with failure: sub-trigger
+      (function () {
+        var r = PE.evaluateP3([evaluable(["Nutrition Adherence"])]);
+        assertEqual(r.streakLength, 1, "P3 streak=1: length");
+        assertEqual(r.active, false, "P3 streak=1: inactive (need 3)");
+        assertEqual(r.expectedAction, null, "P3 streak=1: no action");
+        assertEqual(r.templateData, null, "P3 streak=1: templateData=null");
+      })();
+
+      // 2 weeks with failures: still sub-trigger
+      (function () {
+        var r = PE.evaluateP3([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"])
+        ]);
+        assertEqual(r.streakLength, 2, "P3 streak=2: length");
+        assertEqual(r.active, false, "P3 streak=2: inactive");
+      })();
+
+      // 3 consecutive weeks with rotating failures: Notification
+      (function () {
+        var r = PE.evaluateP3([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          evaluable(["Movement Target"])
+        ]);
+        assertEqual(r.streakLength, 3, "P3 streak=3: length");
+        assertEqual(r.active, true, "P3 streak=3: active");
+        assertEqual(r.expectedAction, "Notification", "P3 streak=3: Notification");
+        assertTruthy(r.templateData, "P3 streak=3: templateData populated");
+        assertEqual(r.templateData.standards_list_recent, ["Movement Target"], "P3 streak=3: recent");
+        assertEqual(r.templateData.standards_list_previous, ["Training Adherence"], "P3 streak=3: previous");
+      })();
+
+      // 4 weeks: Warning
+      (function () {
+        var r = PE.evaluateP3([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          evaluable(["Movement Target"]),
+          evaluable(["Technique Feedback"])
+        ]);
+        assertEqual(r.streakLength, 4, "P3 streak=4: length");
+        assertEqual(r.expectedAction, "Warning", "P3 streak=4: Warning");
+      })();
+
+      // 5 weeks: RedWindow
+      (function () {
+        var r = PE.evaluateP3([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          evaluable(["Movement Target"]),
+          evaluable(["Technique Feedback"]),
+          evaluable(["Nutrition Adherence"])
+        ]);
+        assertEqual(r.streakLength, 5, "P3 streak=5: length");
+        assertEqual(r.expectedAction, "RedWindow", "P3 streak=5: RedWindow");
+      })();
+
+      // Clean week breaks streak
+      (function () {
+        var r = PE.evaluateP3([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          clean(),
+          evaluable(["Movement Target"])
+        ]);
+        assertEqual(r.streakLength, 1, "P3 with mid-clean: streak resets to 1");
+      })();
+
+      // Exempt skipped, consecutivity preserved
+      (function () {
+        var r = PE.evaluateP3([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          exempt(),
+          evaluable(["Movement Target"])
+        ]);
+        assertEqual(r.streakLength, 3, "P3 with exempt mid: streak=3");
+        assertEqual(r.expectedAction, "Notification", "P3 with exempt: Notification");
+      })();
+
+      // Reset: 2 consecutive clean weeks
+      (function () {
+        var r = PE.evaluateP3([
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Training Adherence"]),
+          clean(),
+          clean()
+        ]);
+        assertEqual(r.streakLength, 0, "P3 after 2 clean: streak=0");
+        assertEqual(r.resetReady, true, "P3 after 2 clean: resetReady=true");
+      })();
+
+      // 1 clean does NOT reset
+      (function () {
+        var r = PE.evaluateP3([evaluable(["Nutrition Adherence"]), clean()]);
+        assertEqual(r.resetReady, false, "P3 1 clean: resetReady=false");
+      })();
+    })();
+
+    // =========================================================================
+    // Cross-pathway scenarios (verify pathways behave independently)
+    // =========================================================================
+    (function () {
+      resetWeekIds();
+
+      // Standards v3.3 Example 4 (overlap):
+      // P2 (Nutrition fails 3 weeks) AND triggers P1 (5+ pts) on week 4
+      (function () {
+        var tl = [
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Check-In Submission", "Nutrition Adherence"]) // 7 pts
+        ];
+        var r = PE.evaluateAllPathways(tl);
+        assertEqual(r.p1.streakLength, 1, "Overlap: P1 streak=1");
+        assertEqual(r.p1.expectedAction, "Notification", "Overlap: P1 Notification");
+        var nutrition = null;
+        for (var i = 0; i < r.p2.length; i++) {
+          if (r.p2[i].standard === "Nutrition Adherence") nutrition = r.p2[i];
+        }
+        assertTruthy(nutrition, "Overlap: P2 Nutrition entry exists");
+        assertEqual(nutrition.streakLength, 4, "Overlap: P2 Nutrition streak=4");
+        assertEqual(nutrition.expectedAction, "RedWindow", "Overlap: P2 Nutrition RedWindow");
+        assertEqual(r.p3.streakLength, 4, "Overlap: P3 streak=4");
+        assertEqual(r.p3.expectedAction, "Warning", "Overlap: P3 Warning");
+      })();
+
+      // TDD §4.4 example: W1 N / W2 N / W3 Exempt / W4 N / W5 N -> P2 Nutrition streak=4
+      (function () {
+        var tl = [
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          exempt(),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"])
+        ];
+        var r = PE.evaluateP2(tl);
+        var n = null;
+        for (var i = 0; i < r.length; i++) {
+          if (r[i].standard === "Nutrition Adherence") n = r[i];
+        }
+        assertEqual(n.streakLength, 4, "TDD §4.4 example: P2 Nutrition streak=4");
+        assertEqual(n.expectedAction, "RedWindow", "TDD §4.4 example: P2 Nutrition RedWindow");
+      })();
+
+      // P1 active and P3 also active simultaneously
+      (function () {
+        var tl = [
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Nutrition Adherence"]),
+          evaluable(["Check-In Submission"])
+        ];
+        var r = PE.evaluateAllPathways(tl);
+        assertEqual(r.p1.streakLength, 1, "Cross: P1 streak=1");
+        assertEqual(r.p3.streakLength, 3, "Cross: P3 streak=3");
+        var checkin = null;
+        for (var i = 0; i < r.p2.length; i++) {
+          if (r.p2[i].standard === "Check-In Submission") checkin = r.p2[i];
+        }
+        assertTruthy(checkin, "Cross: P2 Check-In surfaces");
+        assertEqual(checkin.streakLength, 1, "Cross: P2 Check-In streak=1");
+        assertEqual(checkin.active, false, "Cross: P2 Check-In inactive (sub-trigger)");
+      })();
+    })();
+
+    // =========================================================================
+    // API surface
+    // =========================================================================
+    (function () {
+      assertEqual(typeof PE.evaluateP1, "function", "API: evaluateP1 exported");
+      assertEqual(typeof PE.evaluateP2, "function", "API: evaluateP2 exported");
+      assertEqual(typeof PE.evaluateP3, "function", "API: evaluateP3 exported");
+      assertEqual(typeof PE.evaluateAllPathways, "function", "API: evaluateAllPathways exported");
+      assertEqual(Array.isArray(PE.STANDARDS), true, "API: STANDARDS is array");
+      assertEqual(PE.STANDARDS.length, 5, "API: STANDARDS has 5 entries");
+    })();
+
+    // =========================================================================
+    // Render results
+    // =========================================================================
+    var pass = results.filter(function (r) { return r.pass; }).length;
+    var fail = results.length - pass;
+
+    var summary = document.getElementById("summary");
+    summary.className = "summary " + (fail === 0 ? "ok" : "bad");
+    summary.textContent = pass + " passed / " + fail + " failed (total " + results.length + ")";
+
+    var container = document.getElementById("results");
+    results.forEach(function (r) {
+      var div = document.createElement("div");
+      div.className = "test " + (r.pass ? "pass" : "fail");
+      var icon = r.pass ? "PASS" : "FAIL";
+      div.innerHTML = "<span class='label'>" + icon + "</span> " + r.label;
+      if (!r.pass) {
+        div.innerHTML += "<pre>expected: " + JSON.stringify(r.expected) +
+          "\nactual:   " + JSON.stringify(r.actual) + "</pre>";
+      }
+      container.appendChild(div);
+    });
+  })();
+  </script>
+</body>
+</html>
