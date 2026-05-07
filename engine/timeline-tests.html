@@ -9,9 +9,10 @@
     .meta { color: #666; font-size: 0.9rem; margin-bottom: 1.5rem; }
     button { background: #1f6feb; color: white; border: 0; padding: 0.6rem 1.2rem; border-radius: 6px; font-size: 1rem; cursor: pointer; }
     button:hover { background: #1858c4; }
-    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; line-height: 1.4; max-height: 70vh; overflow-y: auto; }
-    .summary-pass { color: #2ea043; font-weight: 600; }
-    .summary-fail { color: #cf222e; font-weight: 600; }
+    pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; line-height: 1.4; max-height: 70vh; overflow-y: auto; white-space: pre-wrap; }
+    .status { margin: 1rem 0; font-weight: 600; }
+    .pass { color: #2ea043; }
+    .fail { color: #cf222e; }
   </style>
 </head>
 <body>
@@ -19,43 +20,43 @@
   <div class="meta">Tests for <code>client-timeline.js</code>. Depends on <code>coaching-week.js</code>.</div>
 
   <button id="run">Run tests</button>
+  <div id="status" class="status"></div>
   <pre id="output">Press "Run tests" to execute the suite.</pre>
 
-  <script type="module">
-    import { runTimelineTests } from './timeline-tests.js';
+  <!-- Load modules in order. UMD style: each attaches a global. -->
+  <script src="./coaching-week.js"></script>
+  <script src="./client-timeline.js"></script>
+  <script src="./timeline-tests.js"></script>
 
+  <script>
     const output = document.getElementById('output');
+    const status = document.getElementById('status');
 
-    // Redirect console.log/error to the pre
-    const origLog = console.log;
-    const origErr = console.error;
-    let buffer = '';
-    function captureStart() {
-      buffer = '';
-      console.log = (...args) => { buffer += args.join(' ') + '\n'; origLog(...args); };
-      console.error = (...args) => { buffer += args.join(' ') + '\n'; origErr(...args); };
-    }
-    function captureEnd() {
-      console.log = origLog;
-      console.error = origErr;
-    }
+    document.getElementById('run').addEventListener('click', function () {
+      const origLog = console.log;
+      const origErr = console.error;
+      let buffer = '';
+      console.log   = function () { buffer += Array.from(arguments).join(' ') + '\n'; origLog.apply(console, arguments); };
+      console.error = function () { buffer += Array.from(arguments).join(' ') + '\n'; origErr.apply(console, arguments); };
 
-    document.getElementById('run').addEventListener('click', () => {
-      captureStart();
       let result;
       try {
-        result = runTimelineTests();
+        result = window.TimelineTests.runTimelineTests();
       } catch (e) {
-        buffer += '\nFATAL: ' + e.message + '\n' + e.stack;
+        buffer += '\nFATAL: ' + e.message + '\n' + (e.stack || '');
       }
-      captureEnd();
+
+      console.log = origLog;
+      console.error = origErr;
 
       output.textContent = buffer;
+
       if (result) {
-        const status = result.failed === 0
-          ? `<span class="summary-pass">✓ All ${result.passed} tests passed</span>`
-          : `<span class="summary-fail">✗ ${result.failed} of ${result.passed + result.failed} tests failed</span>`;
-        output.insertAdjacentHTML('beforebegin', `<div style="margin: 1rem 0;">${status}</div>`);
+        if (result.failed === 0) {
+          status.innerHTML = '<span class="pass">✓ All ' + result.passed + ' tests passed</span>';
+        } else {
+          status.innerHTML = '<span class="fail">✗ ' + result.failed + ' of ' + (result.passed + result.failed) + ' tests failed</span>';
+        }
       }
     });
   </script>
