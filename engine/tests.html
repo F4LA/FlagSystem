@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Coaching Week — Test Suite</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 0 20px;
+    color: #1a1a1a;
+  }
+  h1 { margin-bottom: 4px; }
+  .subtitle { color: #666; margin-bottom: 30px; }
+  .summary {
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .summary.pass { background: #d4f4dd; color: #1a5d2c; }
+  .summary.fail { background: #f8d7da; color: #721c24; }
+  ul { list-style: none; padding: 0; }
+  li {
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 14px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  li.ok { background: #f0faf2; color: #1a5d2c; }
+  li.fail { background: #fdf0f1; color: #721c24; }
+  .icon { font-weight: bold; min-width: 20px; }
+  .err { color: #721c24; font-family: monospace; font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<h1>Coaching Week — Test Suite</h1>
+<div class="subtitle">Validation page for <code>coaching-week.js</code>. Open this file in a browser to run.</div>
+<div id="summary" class="summary">Running tests…</div>
+<ul id="results"></ul>
+
+<script src="coaching-week.js"></script>
+<script src="tests.js"></script>
+<script>
+  (function () {
+    const results = CoachingWeekTests.run();
+    const summary = document.getElementById('summary');
+    const ul = document.getElementById('results');
+
+    summary.classList.add(results.failed === 0 ? 'pass' : 'fail');
+    summary.textContent = results.failed === 0
+      ? 'ALL TESTS PASSED — ' + results.passed + '/' + results.total
+      : 'FAILURES — ' + results.failed + ' failed, ' + results.passed + ' passed (out of ' + results.total + ')';
+
+    for (const r of results.results) {
+      const li = document.createElement('li');
+      li.classList.add(r.ok ? 'ok' : 'fail');
+      const icon = document.createElement('span');
+      icon.className = 'icon';
+      icon.textContent = r.ok ? '✓' : '✗';
+      const body = document.createElement('div');
+      const name = document.createElement('div');
+      name.textContent = r.name;
+      body.appendChild(name);
+      if (!r.ok) {
+        const err = document.createElement('div');
+        err.className = 'err';
+        err.textContent = r.error;
+        body.appendChild(err);
+      }
+      li.appendChild(icon);
+      li.appendChild(body);
+      ul.appendChild(li);
+    }
+  })();
+</script>
+</body>
+</html>
