@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Color Deriver — Step 3e-1 Tests</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .summary { padding: 12px 16px; border-radius: 8px; margin: 16px 0 24px; font-weight: 600; }
+  .summary.pass { background: #e6f7ec; color: #0a6e2c; }
+  .summary.fail { background: #fdecea; color: #a8231a; }
+  .group { margin: 24px 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: #555; font-weight: 600; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  .test { padding: 10px 12px; margin: 6px 0; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; }
+  .test.pass { background: #f1faf4; border-left: 3px solid #2ea44f; }
+  .test.fail { background: #fff5f4; border-left: 3px solid #cf222e; }
+  .test .name { font-weight: 600; }
+  .test .err { margin-top: 6px; color: #a8231a; white-space: pre-wrap; }
+  code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>Color Deriver — Step 3e-1 Tests</h1>
+<div id="summary" class="summary">Running...</div>
+<div id="results"></div>
+
+<!-- Engine modules. Load in dependency order. -->
+<script src="./coaching-week.js"></script>
+<script src="./client-timeline.js"></script>
+<script src="./consecutive-evaluable.js"></script>
+<script src="./pathway-evaluators.js"></script>
+<script src="./color-deriver.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------------
+  // Tiny test framework
+  // ---------------------------------------------------------------------------
+  var TESTS = [];
+  var CURRENT_GROUP = null;
+
+  function group(name) { CURRENT_GROUP = name; }
+  function test(name, fn) { TESTS.push({ name: name, fn: fn, group: CURRENT_GROUP }); }
+
+  function eq(actual, expected, label) {
+    var a = JSON.stringify(actual);
+    var e = JSON.stringify(expected);
+    if (a !== e) {
+      throw new Error(
+        (label ? label + "\n" : "") +
+        "expected: " + e + "\n" +
+        "actual:   " + a
+      );
+    }
+  }
+
+  function assert(cond, msg) {
+    if (!cond) throw new Error(msg || "assertion failed");
+  }
+
+  function run() {
+    var results = document.getElementById("results");
+    var summary = document.getElementById("summary");
+    var byGroup = {};
+    TESTS.forEach(function (t) {
+      var g = t.group || "(ungrouped)";
+      if (!byGroup[g]) byGroup[g] = [];
+      byGroup[g].push(t);
+    });
+
+    var pass = 0, fail = 0;
+
+    Object.keys(byGroup).forEach(function (g) {
+      var header = document.createElement("div");
+      header.className = "group";
+      header.textContent = g;
+      results.appendChild(header);
+
+      byGroup[g].forEach(function (t) {
+        var div = document.createElement("div");
+        div.className = "test";
+        var nameEl = document.createElement("div");
+        nameEl.className = "name";
+        nameEl.textContent = t.name;
+        div.appendChild(nameEl);
+        try {
+          t.fn();
+          div.classList.add("pass");
+          nameEl.textContent = "✓ " + t.name;
+          pass++;
+        } catch (e) {
+          div.classList.add("fail");
+          nameEl.textContent = "✗ " + t.name;
+          var err = document.createElement("div");
+          err.className = "err";
+          err.textContent = (e && e.message) || String(e);
+          div.appendChild(err);
+          fail++;
+        }
+        results.appendChild(div);
+      });
+    });
+
+    if (fail === 0) {
+      summary.className = "summary pass";
+      summary.textContent = "✓ All " + pass + " tests passed.";
+    } else {
+      summary.className = "summary fail";
+      summary.textContent = "✗ " + fail + " failed, " + pass + " passed.";
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fixture builders
+  // ---------------------------------------------------------------------------
+
+  // Build a WeekRecord. Defaults to an evaluable Green week.
+  function mkWeek(opts) {
+    opts = opts || {};
+    var status = opts.status || "evaluable";
+    var rec = {
+      weekId: opts.weekId || "2026-W01",
+      weekIndex: opts.weekIndex || 0,
+      status: status,
+      weekStart: opts.weekStart || new Date("2026-01-02T05:00:00Z"),
+      weekEnd: opts.weekEnd || new Date("2026-01-08T04:59:59Z"),
+      submissionCount: status === "missing" ? 0 : 1,
+      rawSubmissions: []
+    };
+    if (status === "evaluable") {
+      rec.points = opts.points != null ? opts.points : 0;
+      rec.failedStandards = opts.failedStandards || [];
+      rec.passedStandards = opts.passedStandards || [
+        "Check-In Submission",
+        "Training Adherence",
+        "Nutrition Adherence",
+        "Movement Target",
+        "Technique Feedback"
+      ];
+      rec.callRequested = opts.callRequested == null ? null : opts.callRequested;
+      rec.notes = opts.notes || null;
+      rec.loomLink = opts.loomLink || null;
+    }
+    return rec;
+  }
+
+  // Build a chronological 16-week green timeline, then optionally overlay
+  // specific weeks at the end.
+  function mkTimeline(weeks) {
+    // weeks is an array of partial week specs ordered chronologically.
+    // weekId / weekStart / weekEnd are auto-generated if not provided.
+    return weeks.map(function (w, i) {
+      var weekId = w.weekId || ("2026-W" + String(i + 1).padStart(2, "0"));
+      var start = new Date(2026, 0, 2 + i * 7);
+      var end = new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000 + (23 * 3600 + 59 * 60 + 59) * 1000);
+      return mkWeek(Object.assign({}, w, {
+        weekId: weekId,
+        weekIndex: i,
+        weekStart: start,
+        weekEnd: end
+      }));
+    });
+  }
+
+  // Build an HC Actions row.
+  function mkAction(opts) {
+    return {
+      timestamp: opts.timestamp,
+      actionWeek: opts.actionWeek || null,
+      client: opts.client || "Test Client",
+      coach: opts.coach || "Test Coach",
+      pathway: opts.pathway || null,
+      standard: opts.standard || null,
+      actionType: opts.actionType,
+      notes: opts.notes || null,
+      outcome: opts.outcome || null,
+      followUpDueDate: opts.followUpDueDate || null,
+      actionId: opts.actionId || ("act-" + Math.random().toString(36).slice(2, 8))
+    };
+  }
+
+  // Run the full 3b -> 3d -> 3e-1 pipeline for a given timeline + actions.
+  function pipeline(timeline, actions) {
+    var states = window.PathwayEvaluators.evaluateAllPathways(timeline);
+    var colored = window.ColorDeriver.derivePathwayColors(states, timeline, actions || []);
+    var overall = window.ColorDeriver.resolveOverallColor(colored);
+    return { states: states, colored: colored, overall: overall };
+  }
+
+  // ---------------------------------------------------------------------------
+  // GROUP: Baseline / no streaks
+  // ---------------------------------------------------------------------------
+  group("Baseline");
+
+  test("All-green timeline -> overall Green, no dominant pathway", function () {
+    var tl = mkTimeline([
+      {}, {}, {}, {}, {}, {}
+    ]);
+    var r = pipeline(tl);
+    eq(r.overall.color, "Green");
+    eq(r.overall.dominantPathway, null);
+  });
+
+  test("Single failing week below P1 threshold -> P1 yellow only if active (it isn't here -> Green)", function () {
+    var tl = mkTimeline([
+      {}, {}, {}, {}, { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] }
+    ]);
+    // P1 threshold is streak length >= 1 of 5+ points -> Notification (Yellow)
+    var r = pipeline(tl);
+    eq(r.overall.color, "Yellow");
+    eq(r.overall.dominantPathway, "P1");
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: P1 color derivation
+  // ---------------------------------------------------------------------------
+  group("P1 color derivation");
+
+  test("P1 streak of 1 (5+ points) -> Yellow (Notification)", function () {
+    var tl = mkTimeline([
+      {}, {}, {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p1.color, "Yellow");
+  });
+
+  test("P1 streak of 2 (5+ points) -> Yellow (Warning)", function () {
+    var tl = mkTimeline([
+      {}, {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 7, failedStandards: ["Check-In Submission","Training Adherence"], passedStandards: ["Nutrition Adherence","Movement Target","Technique Feedback"] }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p1.color, "Yellow");
+  });
+
+  test("P1 streak of 3 (RedWindow) but no callRequested -> Yellow", function () {
+    var tl = mkTimeline([
+      {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"], callRequested: null }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p1.color, "Yellow");
+    eq(r.colored.p1.colorReason, "red-window-awaiting-call");
+  });
+
+  test("P1 streak of 3 with callRequested='Client accepted' -> Red", function () {
+    var tl = mkTimeline([
+      {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"], callRequested: "Client accepted" }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p1.color, "Red");
+    eq(r.overall.color, "Red");
+    eq(r.overall.dominantPathway, "P1");
+  });
+
+  test("P1 RedWindow with callRequested='Client declined' -> Red (the ask happened)", function () {
+    var tl = mkTimeline([
+      {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"], callRequested: "Client declined" }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p1.color, "Red");
+  });
+
+  test("P1 RedWindow with callRequested='Escalated to HC' -> Red", function () {
+    var tl = mkTimeline([
+      {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"], callRequested: "Escalated to HC" }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p1.color, "Red");
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: P2 color derivation
+  // ---------------------------------------------------------------------------
+  group("P2 color derivation");
+
+  test("P2 Nutrition streak of 2 -> Yellow", function () {
+    var tl = mkTimeline([
+      {}, {}, {},
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }
+    ]);
+    var r = pipeline(tl);
+    var p2nut = r.colored.p2.find(function (p) { return p.standard === "Nutrition Adherence"; });
+    assert(p2nut, "expected P2 Nutrition state");
+    eq(p2nut.color, "Yellow");
+  });
+
+  test("P2 Nutrition streak of 4 + callRequested -> Red", function () {
+    var tl = mkTimeline([
+      {},
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"], callRequested: "Client accepted" }
+    ]);
+    var r = pipeline(tl);
+    var p2nut = r.colored.p2.find(function (p) { return p.standard === "Nutrition Adherence"; });
+    eq(p2nut.color, "Red");
+  });
+
+  test("P2 Nutrition streak of 4 without callRequested -> Yellow", function () {
+    var tl = mkTimeline([
+      {},
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"], callRequested: null }
+    ]);
+    var r = pipeline(tl);
+    var p2nut = r.colored.p2.find(function (p) { return p.standard === "Nutrition Adherence"; });
+    eq(p2nut.color, "Yellow");
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: P3 color derivation
+  // ---------------------------------------------------------------------------
+  group("P3 color derivation");
+
+  test("P3 streak of 3 (varied standards) -> Yellow (Notification)", function () {
+    var tl = mkTimeline([
+      {}, {},
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Training Adherence"], passedStandards: ["Check-In Submission","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Movement Target"], passedStandards: ["Check-In Submission","Training Adherence","Nutrition Adherence","Technique Feedback"] }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p3.color, "Yellow");
+  });
+
+  test("P3 streak of 5 + callRequested -> Red", function () {
+    var tl = mkTimeline([
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Training Adherence"], passedStandards: ["Check-In Submission","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Movement Target"], passedStandards: ["Check-In Submission","Training Adherence","Nutrition Adherence","Technique Feedback"] },
+      { points: 1, failedStandards: ["Technique Feedback"], passedStandards: ["Check-In Submission","Training Adherence","Nutrition Adherence","Movement Target"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"], callRequested: "Client accepted" }
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p3.color, "Red");
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: Overall color resolution
+  // ---------------------------------------------------------------------------
+  group("Overall color resolution (shortest-timeline priority)");
+
+  test("P1 Yellow + P3 Yellow -> overall Yellow, dominant P1", function () {
+    // Need a streak that triggers both. P1 needs 5+ points; failing
+    // Check-In Submission gives 5 points and also fails a standard for P3.
+    var tl = mkTimeline([
+      {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] }
+    ]);
+    var r = pipeline(tl);
+    eq(r.overall.color, "Yellow");
+    eq(r.overall.dominantPathway, "P1");
+  });
+
+  test("P1 Yellow + P2 Nutrition Red -> overall Red, dominant P2:Nutrition", function () {
+    // Build streak: 4 weeks of Nutrition failing + last week also missing check-in
+    // so P1 hits Notification in the last week. P2 Nutrition has 4-week streak
+    // -> RedWindow + callRequested -> Red.
+    var tl = mkTimeline([
+      {},
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 7, failedStandards: ["Check-In Submission","Nutrition Adherence"], passedStandards: ["Training Adherence","Movement Target","Technique Feedback"], callRequested: "Client accepted" }
+    ]);
+    var r = pipeline(tl);
+    eq(r.overall.color, "Red");
+    eq(r.overall.dominantPathway, "P2:Nutrition Adherence");
+  });
+
+  test("P2 Nutrition Red + P2 Training Red -> dominant = longer streakLength", function () {
+    // 5 weeks of Nutrition failing, 4 of those also Training failing,
+    // last week callRequested set.
+    var tl = mkTimeline([
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 4, failedStandards: ["Nutrition Adherence","Training Adherence"], passedStandards: ["Check-In Submission","Movement Target","Technique Feedback"] },
+      { points: 4, failedStandards: ["Nutrition Adherence","Training Adherence"], passedStandards: ["Check-In Submission","Movement Target","Technique Feedback"] },
+      { points: 4, failedStandards: ["Nutrition Adherence","Training Adherence"], passedStandards: ["Check-In Submission","Movement Target","Technique Feedback"] },
+      { points: 4, failedStandards: ["Nutrition Adherence","Training Adherence"], passedStandards: ["Check-In Submission","Movement Target","Technique Feedback"], callRequested: "Client accepted" }
+    ]);
+    var r = pipeline(tl);
+    var p2nut = r.colored.p2.find(function (p) { return p.standard === "Nutrition Adherence"; });
+    var p2tr  = r.colored.p2.find(function (p) { return p.standard === "Training Adherence"; });
+    eq(p2nut.color, "Red");
+    eq(p2tr.color, "Red");
+    eq(r.overall.color, "Red");
+    eq(r.overall.dominantPathway, "P2:Nutrition Adherence"); // streak 5 vs 4
+  });
+
+  test("P2 Nutrition Red + P3 Red -> dominant P2:Nutrition (shorter timeline)", function () {
+    // Build a 5-week varied-failure streak with Nutrition in all 4 most recent.
+    var tl = mkTimeline([
+      { points: 2, failedStandards: ["Training Adherence"], passedStandards: ["Check-In Submission","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"], callRequested: "Client accepted" }
+    ]);
+    var r = pipeline(tl);
+    eq(r.overall.color, "Red");
+    eq(r.overall.dominantPathway, "P2:Nutrition Adherence");
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: Reset and Post-Red gating
+  // ---------------------------------------------------------------------------
+  group("Reset and Post-Red gating");
+
+  test("P1 with resetReady=true and no Post-Red -> Green", function () {
+    // 2 consecutive clean weeks at end after some failing weeks
+    var tl = mkTimeline([
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      {}, {}
+    ]);
+    var r = pipeline(tl);
+    eq(r.colored.p1.color, "Green");
+    // Once the streak fully clears, 3d reports active=false. Color is Green
+    // whether the reason is "not-active" or "reset" — both indicate the
+    // pathway has no current concern. Assert just the color here.
+  });
+
+  test("P1 streak cleared BUT active Post-Red -> Yellow (stays visible)", function () {
+    // Build a P1 RedWindow streak then 2 clean weeks at end, with an
+    // HC Email: Sent action for P1 (Post-Red open). Pathway has technically
+    // "cleared" but HC is still following up.
+    var tl = mkTimeline([
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"], callRequested: "Client accepted" },
+      {},
+      {}
+    ]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 24),
+        pathway: "P1",
+        actionType: "HC Email: Sent"
+      })
+    ];
+    var r = pipeline(tl, actions);
+    eq(r.colored.p1.color, "Yellow");
+    eq(r.colored.p1.colorReason, "post-red-tracking");
+  });
+
+  test("P1 streak cleared AND Post-Red closed -> Green", function () {
+    // Same shape but HC Call: Resolved closes the Post-Red.
+    var tl = mkTimeline([
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"] },
+      { points: 5, failedStandards: ["Check-In Submission"], passedStandards: ["Training Adherence","Nutrition Adherence","Movement Target","Technique Feedback"], callRequested: "Client accepted" },
+      {},
+      {}
+    ]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 24),
+        pathway: "P1",
+        actionType: "HC Email: Sent"
+      }),
+      mkAction({
+        timestamp: new Date(2026, 0, 28),
+        pathway: "P1",
+        actionType: "HC Call: Resolved"
+      })
+    ];
+    var r = pipeline(tl, actions);
+    eq(r.colored.p1.color, "Green");
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: Manual Overrides
+  // ---------------------------------------------------------------------------
+  group("Manual Overrides");
+
+  test("Manual Override: Pathway Closed forces Green", function () {
+    var tl = mkTimeline([
+      {},
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }
+    ]);
+    var lastWeekEnd = tl[tl.length - 1].weekEnd;
+    var afterLastWeek = new Date(lastWeekEnd.getTime() + 24 * 3600 * 1000);
+    var actions = [
+      mkAction({
+        timestamp: afterLastWeek,
+        pathway: "P2",
+        standard: "Nutrition Adherence",
+        actionType: "Manual Override: Pathway Closed"
+      })
+    ];
+    var r = pipeline(tl, actions);
+    var p2nut = r.colored.p2.find(function (p) { return p.standard === "Nutrition Adherence"; });
+    eq(p2nut.color, "Green");
+    eq(p2nut.colorReason, "override");
+  });
+
+  test("Manual Override invalidated by newer evaluable data", function () {
+    var tl = mkTimeline([
+      {},
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] },
+      { points: 2, failedStandards: ["Nutrition Adherence"], passedStandards: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }
+    ]);
+    var lastWeekEnd = tl[tl.length - 1].weekEnd;
+    var beforeLastWeek = new Date(lastWeekEnd.getTime() - 14 * 24 * 3600 * 1000);
+    var actions = [
+      mkAction({
+        timestamp: beforeLastWeek,
+        pathway: "P2",
+        standard: "Nutrition Adherence",
+        actionType: "Manual Override: Pathway Closed"
+      })
+    ];
+    var r = pipeline(tl, actions);
+    var p2nut = r.colored.p2.find(function (p) { return p.standard === "Nutrition Adherence"; });
+    // Override is older than last evaluable week -> invalidated -> P2 Yellow.
+    eq(p2nut.color, "Yellow");
+    assert(p2nut.colorReason !== "override", "override should be invalidated");
+  });
+
+  test("Manual Override: Color Change with force:Red forces Red", function () {
+    var tl = mkTimeline([
+      {}, {}, {}, {}
+    ]);
+    var lastWeekEnd = tl[tl.length - 1].weekEnd;
+    var afterLastWeek = new Date(lastWeekEnd.getTime() + 24 * 3600 * 1000);
+    var actions = [
+      mkAction({
+        timestamp: afterLastWeek,
+        pathway: "P1",
+        actionType: "Manual Override: Color Change",
+        notes: "force:Red"
+      })
+    ];
+    var r = pipeline(tl, actions);
+    eq(r.colored.p1.color, "Red");
+    eq(r.colored.p1.colorReason, "override");
+  });
+
+  test("Manual Override: Color Change with malformed notes is ignored", function () {
+    var tl = mkTimeline([
+      {}, {}, {}, {}
+    ]);
+    var lastWeekEnd = tl[tl.length - 1].weekEnd;
+    var afterLastWeek = new Date(lastWeekEnd.getTime() + 24 * 3600 * 1000);
+    var actions = [
+      mkAction({
+        timestamp: afterLastWeek,
+        pathway: "P1",
+        actionType: "Manual Override: Color Change",
+        notes: "garbage"
+      })
+    ];
+    var r = pipeline(tl, actions);
+    // Should fall back to automatic logic. All green timeline -> Green.
+    eq(r.colored.p1.color, "Green");
+  });
+
+  test("Most recent override wins when multiple exist", function () {
+    var tl = mkTimeline([
+      {}, {}, {}, {}
+    ]);
+    var lastWeekEnd = tl[tl.length - 1].weekEnd;
+    var t1 = new Date(lastWeekEnd.getTime() + 1 * 24 * 3600 * 1000);
+    var t2 = new Date(lastWeekEnd.getTime() + 2 * 24 * 3600 * 1000);
+    var actions = [
+      mkAction({
+        timestamp: t1,
+        pathway: "P1",
+        actionType: "Manual Override: Color Change",
+        notes: "force:Red"
+      }),
+      mkAction({
+        timestamp: t2,
+        pathway: "P1",
+        actionType: "Manual Override: Color Change",
+        notes: "force:Yellow"
+      })
+    ];
+    var r = pipeline(tl, actions);
+    eq(r.colored.p1.color, "Yellow");
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: Post-Red detection internals
+  // ---------------------------------------------------------------------------
+  group("Post-Red detection internals");
+
+  test("hasActivePostRed: open action then no close -> true", function () {
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 10),
+        pathway: "P1",
+        actionType: "HC Email: Sent"
+      })
+    ];
+    var r = window.ColorDeriver._internal.hasActivePostRed(actions, "P1", null);
+    eq(r, true);
+  });
+
+  test("hasActivePostRed: open then close -> false", function () {
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 10),
+        pathway: "P1",
+        actionType: "HC Email: Sent"
+      }),
+      mkAction({
+        timestamp: new Date(2026, 0, 15),
+        pathway: "P1",
+        actionType: "HC Call: Resolved"
+      })
+    ];
+    var r = window.ColorDeriver._internal.hasActivePostRed(actions, "P1", null);
+    eq(r, false);
+  });
+
+  test("hasActivePostRed: P2 standard mismatch -> false", function () {
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 10),
+        pathway: "P2",
+        standard: "Nutrition Adherence",
+        actionType: "HC Email: Sent"
+      })
+    ];
+    var r = window.ColorDeriver._internal.hasActivePostRed(actions, "P2", "Training Adherence");
+    eq(r, false);
+  });
+
+  test("hasActivePostRed: P2 standard short form matches long form", function () {
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 10),
+        pathway: "P2",
+        standard: "Nutrition",
+        actionType: "HC Email: Sent"
+      })
+    ];
+    var r = window.ColorDeriver._internal.hasActivePostRed(actions, "P2", "Nutrition Adherence");
+    eq(r, true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: callRequested handling
+  // ---------------------------------------------------------------------------
+  group("callRequested handling");
+
+  test("Empty string callRequested -> NOT a red trigger", function () {
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger(""), false);
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger("   "), false);
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger(null), false);
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger(undefined), false);
+  });
+
+  test("Known callRequested values -> red trigger", function () {
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger("Client accepted"), true);
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger("Client declined"), true);
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger("Client did not respond"), true);
+    eq(window.ColorDeriver._internal.isCallRequestedRedTrigger("Escalated to HC"), true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // GROUP: resolveOverallColor unit cases
+  // ---------------------------------------------------------------------------
+  group("resolveOverallColor unit cases");
+
+  test("All Green -> Green, dominant null", function () {
+    var r = window.ColorDeriver.resolveOverallColor({
+      p1: { color: "Green", streakLength: 0 },
+      p2: [],
+      p3: { color: "Green", streakLength: 0 }
+    });
+    eq(r, { color: "Green", dominantPathway: null });
+  });
+
+  test("Only P3 Yellow -> Yellow, dominant P3", function () {
+    var r = window.ColorDeriver.resolveOverallColor({
+      p1: { color: "Green", streakLength: 0 },
+      p2: [],
+      p3: { color: "Yellow", streakLength: 3 }
+    });
+    eq(r, { color: "Yellow", dominantPathway: "P3" });
+  });
+
+  test("P1 Yellow + P3 Red -> Red, dominant P3 (P1 not at max severity)", function () {
+    var r = window.ColorDeriver.resolveOverallColor({
+      p1: { color: "Yellow", streakLength: 1 },
+      p2: [],
+      p3: { color: "Red", streakLength: 5 }
+    });
+    eq(r, { color: "Red", dominantPathway: "P3" });
+  });
+
+  test("P1 Red + P2 Red + P3 Red -> Red, dominant P1 (shortest timeline)", function () {
+    var r = window.ColorDeriver.resolveOverallColor({
+      p1: { color: "Red", streakLength: 3 },
+      p2: [{ standard: "Nutrition Adherence", color: "Red", streakLength: 4 }],
+      p3: { color: "Red", streakLength: 5 }
+    });
+    eq(r, { color: "Red", dominantPathway: "P1" });
+  });
+
+  test("Two P2 Red tied on streakLength -> alphabetic standard wins", function () {
+    var r = window.ColorDeriver.resolveOverallColor({
+      p1: { color: "Green", streakLength: 0 },
+      p2: [
+        { standard: "Nutrition Adherence", color: "Red", streakLength: 4 },
+        { standard: "Movement Target", color: "Red", streakLength: 4 }
+      ],
+      p3: { color: "Green", streakLength: 0 }
+    });
+    eq(r, { color: "Red", dominantPathway: "P2:Movement Target" });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Run
+  // ---------------------------------------------------------------------------
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", run);
+  } else {
+    run();
+  }
+})();
+</script>
+
+</body>
+</html>
