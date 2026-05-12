@@ -1,315 +1,116 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Flag System — Strong Standard</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #E8E4DC; --surface: #FFFFFF; --surface-2: #F0F3F7;
-  --navy-900: #080D1A; --navy-800: #0D1526; --navy-600: #17243B;
-  --steel-700: #1A5F8A; --steel-600: #2278AC; --steel-400: #3899CC; --steel-100: #A8CDE0;
-  --text-primary: #080D1A; --text-body: #2C3A50; --text-muted: #637285; --text-faint: #A0AEBF;
-  --border: #E2E8F0; --border-strong: #C8D4E0;
-  --green: #1A9E5C; --green-bg: #E8F8F0; --green-border: #A3DFC0;
-  --red: #C93A3A; --red-bg: #FDEAEA; --red-border: #F0AAAA;
-  --yellow: #B45309; --yellow-bg: #FEF3E2; --yellow-border: #F4C17A;
-  --black-flag: #2C3A50; --black-flag-bg: #E8EAEE; --black-flag-border: #B8C0CC;
-  --sans: 'DM Sans', sans-serif; --mono: 'DM Mono', monospace; --radius: 14px;
-}
-body { background: var(--bg); color: var(--text-body); font-family: var(--sans); font-size: 15px; min-height: 100vh; line-height: 1.6; -webkit-font-smoothing: antialiased; }
-
-#loading-screen { position: fixed; inset: 0; background: var(--navy-900); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; z-index: 1000; }
-#loading-screen.hidden { display: none; }
-#error-screen { position: fixed; inset: 0; background: var(--navy-900); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; z-index: 1000; padding: 2rem; }
-#error-screen.hidden { display: none; }
-.spinner { width: 36px; height: 36px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--steel-400); border-radius: 50%; animation: spin 0.7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.loading-brand { font-size: 15px; font-weight: 700; color: white; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 8px; }
-.loading-text { font-size: 13px; color: rgba(255,255,255,0.5); font-family: var(--mono); }
-.error-title { font-size: 16px; font-weight: 600; color: #FDEAEA; }
-.error-msg { font-size: 13px; color: rgba(255,255,255,0.6); font-family: var(--mono); text-align: center; max-width: 600px; line-height: 1.6; }
-.retry-btn { background: var(--steel-600); color: white; border: none; border-radius: 8px; padding: 10px 24px; font-size: 14px; font-family: var(--sans); cursor: pointer; font-weight: 600; margin-top: 8px; }
-.retry-btn:hover { background: var(--steel-400); }
-
-header { background: var(--navy-900); padding: 0 2.5rem; height: 64px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
-.header-brand { display: flex; align-items: center; gap: 14px; }
-.brand-mark { width: 34px; height: 34px; background: var(--steel-600); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: white; letter-spacing: 0.04em; flex-shrink: 0; }
-.brand-name { font-size: 13px; font-weight: 700; color: #fff; letter-spacing: 0.12em; text-transform: uppercase; }
-.brand-pipe { width: 1px; height: 20px; background: rgba(255,255,255,0.15); }
-.brand-sub { font-size: 13px; color: rgba(255,255,255,0.5); font-weight: 400; }
-.week-display { display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 0 16px; height: 40px; }
-.week-id { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--steel-400); letter-spacing: 0.06em; }
-.week-range { font-size: 13px; color: rgba(255,255,255,0.75); }
-.header-right { display: flex; align-items: center; gap: 12px; }
-.refresh-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 7px; padding: 6px 14px; color: rgba(255,255,255,0.6); font-size: 12px; font-family: var(--sans); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 6px; }
-.refresh-btn:hover { color: white; background: rgba(255,255,255,0.12); }
-.refresh-btn:disabled { opacity: 0.4; cursor: wait; }
-
-.tab-bar { background: var(--navy-900); border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; padding: 0 2.5rem; }
-.tab-btn { background: none; border: none; border-bottom: 2px solid transparent; padding: 12px 20px; font-family: var(--sans); font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.45); cursor: pointer; transition: all 0.15s; margin-bottom: -1px; white-space: nowrap; }
-.tab-btn:hover { color: rgba(255,255,255,0.75); }
-.tab-btn.active { color: white; border-bottom-color: var(--steel-400); }
-.tab-content { display: none; }
-.tab-content.active { display: block; }
-
-main { max-width: 1280px; margin: 0 auto; padding: 2.5rem 2.5rem 4rem; display: flex; flex-direction: column; gap: 2.5rem; }
-
-.debug-panel { background: var(--surface); border: 1.5px solid var(--steel-100); border-left: 5px solid var(--steel-600); border-radius: var(--radius); padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
-.debug-title { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--steel-700); margin-bottom: 8px; }
-.debug-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.debug-stat { display: flex; flex-direction: column; gap: 2px; }
-.debug-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.debug-stat-value { font-family: var(--mono); font-size: 18px; font-weight: 500; color: var(--text-primary); }
-.debug-note { font-size: 11px; color: var(--text-faint); margin-top: 12px; font-style: italic; }
-
-.placeholder-card { background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius); padding: 3rem 2rem; text-align: center; }
-.placeholder-icon { font-size: 32px; margin-bottom: 12px; opacity: 0.3; }
-.placeholder-title { font-size: 16px; font-weight: 600; color: var(--text-body); margin-bottom: 6px; }
-.placeholder-msg { font-size: 13px; color: var(--text-muted); }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flag System Dashboard — Strong Standard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<div id="loading-screen">
-  <div class="spinner"></div>
-  <div class="loading-brand">Flag System</div>
-  <div class="loading-text" id="loading-text">Initializing...</div>
-</div>
+  <header class="top-bar">
+    <div class="brand">
+      <span class="brand-mark">STRONG STANDARD</span>
+      <span class="brand-sub">Flag System Dashboard</span>
+    </div>
+    <div class="top-bar-right">
+      <span class="refresh-meta" id="refresh-meta">Loading…</span>
+      <button class="btn btn-secondary" id="refresh-btn" type="button">
+        <span class="btn-icon">↻</span>
+        <span>Refresh</span>
+      </button>
+    </div>
+  </header>
 
-<div id="error-screen" class="hidden">
-  <div class="error-title">Failed to load dashboard</div>
-  <div class="error-msg" id="error-msg">An error occurred while loading data.</div>
-  <button class="retry-btn" onclick="init()">Retry</button>
-</div>
+  <nav class="tab-nav" id="tab-nav">
+    <button class="tab-btn is-active" data-tab="queue" type="button">Friday Action Queue</button>
+    <button class="tab-btn" data-tab="roster" type="button">Client Roster</button>
+    <button class="tab-btn" data-tab="patterns" type="button">Coach Patterns</button>
+    <button class="tab-btn" data-tab="black" type="button">Black Flagged Clients</button>
+  </nav>
 
-<header>
-  <div class="header-brand">
-    <div class="brand-mark">FS</div>
-    <div class="brand-name">Strong Standard</div>
-    <div class="brand-pipe"></div>
-    <div class="brand-sub">Flag System</div>
-  </div>
-  <div class="week-display">
-    <span class="week-id" id="week-id">W00</span>
-    <span class="week-range" id="week-range">— — —</span>
-  </div>
-  <div class="header-right">
-    <button class="refresh-btn" id="refresh-btn" onclick="refresh()">↻ Refresh</button>
-  </div>
-</header>
+  <main class="main" id="main">
 
-<div class="tab-bar">
-  <button class="tab-btn active" data-tab="action-queue">Friday Action Queue</button>
-  <button class="tab-btn" data-tab="roster">Client Roster</button>
-  <button class="tab-btn" data-tab="patterns">Coach Patterns</button>
-  <button class="tab-btn" data-tab="black-flagged">Black Flagged</button>
-</div>
-
-<main>
-  <div class="tab-content active" id="tab-action-queue">
-    <div class="debug-panel">
-      <div class="debug-title">Build Status — Step 1 (Infrastructure)</div>
-      <div class="debug-grid">
-        <div class="debug-stat">
-          <div class="debug-stat-label">Active Roster</div>
-          <div class="debug-stat-value" id="stat-roster">—</div>
-        </div>
-        <div class="debug-stat">
-          <div class="debug-stat-label">Form Submissions</div>
-          <div class="debug-stat-value" id="stat-forms">—</div>
-        </div>
-        <div class="debug-stat">
-          <div class="debug-stat-label">Last Refresh</div>
-          <div class="debug-stat-value" id="stat-refresh">—</div>
-        </div>
+    <section class="tab-panel is-active" id="panel-queue" aria-labelledby="tab-queue">
+      <div class="loading-state" id="queue-loading">
+        <div class="spinner"></div>
+        <p>Loading client data…</p>
       </div>
-      <div class="debug-note">This panel will be removed before launch. It confirms the dashboard can read both sheets correctly.</div>
-    </div>
-    <div class="placeholder-card">
-      <div class="placeholder-icon">⚑</div>
-      <div class="placeholder-title">Friday Action Queue</div>
-      <div class="placeholder-msg">Will be built in Step 5.1 — the most important view.</div>
+      <div class="error-state hidden" id="queue-error">
+        <h2>Could not load data</h2>
+        <p id="queue-error-message"></p>
+        <button class="btn btn-secondary" type="button" onclick="window.location.reload()">Try again</button>
+      </div>
+      <div class="queue-content hidden" id="queue-content"></div>
+    </section>
+
+    <section class="tab-panel" id="panel-roster">
+      <div class="placeholder">
+        <h2>Client Roster</h2>
+        <p>Coming in v1.1</p>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-patterns">
+      <div class="placeholder">
+        <h2>Coach Patterns</h2>
+        <p>Coming in v1.1</p>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-black">
+      <div class="placeholder">
+        <h2>Black Flagged Clients</h2>
+        <p>Coming in v1.1</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Slack modal -->
+  <div class="modal-backdrop hidden" id="slack-modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="modal-header">
+        <h2 id="modal-title">Generate Slack Message</h2>
+        <button class="modal-close" type="button" id="modal-close" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-meta" id="modal-meta"></p>
+        <textarea class="modal-textarea" id="modal-textarea" rows="10" spellcheck="false"></textarea>
+      </div>
+      <footer class="modal-footer">
+        <button class="btn btn-secondary" type="button" id="modal-copy">
+          <span class="btn-icon">⧉</span>
+          <span id="modal-copy-label">Copy</span>
+        </button>
+        <button class="btn btn-primary" type="button" id="modal-mark-sent">Mark sent →</button>
+      </footer>
     </div>
   </div>
 
-  <div class="tab-content" id="tab-roster">
-    <div class="placeholder-card">
-      <div class="placeholder-icon">⚑</div>
-      <div class="placeholder-title">Client Roster Overview</div>
-      <div class="placeholder-msg">Will be built in Step 5.2.</div>
-    </div>
-  </div>
+  <!-- Toast container -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
-  <div class="tab-content" id="tab-patterns">
-    <div class="placeholder-card">
-      <div class="placeholder-icon">⚑</div>
-      <div class="placeholder-title">Coach Patterns</div>
-      <div class="placeholder-msg">Will be built in Step 5.3.</div>
-    </div>
-  </div>
+  <!-- Engine (load order matters: UMD modules with browser globals) -->
+  <script src="engine/coaching-week.js"></script>
+  <script src="engine/client-timeline.js"></script>
+  <script src="engine/consecutive-evaluable.js"></script>
+  <script src="engine/pathway-evaluators.js"></script>
+  <script src="engine/color-deriver.js"></script>
+  <script src="engine/pathway-engine.js"></script>
 
-  <div class="tab-content" id="tab-black-flagged">
-    <div class="placeholder-card">
-      <div class="placeholder-icon">⚑</div>
-      <div class="placeholder-title">Black Flagged Clients</div>
-      <div class="placeholder-msg">Will be built in Step 5.4.</div>
-    </div>
-  </div>
-</main>
+  <!-- Dashboard modules -->
+  <script src="dashboard/config.js"></script>
+  <script src="dashboard/sheets-reader.js"></script>
+  <script src="dashboard/state-builder.js"></script>
+  <script src="dashboard/slack-templates.js"></script>
+  <script src="dashboard/queue-builder.js"></script>
+  <script src="dashboard/actions-writer.js"></script>
+  <script src="dashboard/tab1.js"></script>
+  <script src="app.js"></script>
 
-<script>
-// ─── CONFIG ──────────────────────────────────────────────────────────────────
-const API_KEY = 'AIzaSyCbpE8CmLKpfmbMPLXkEmWe-5zEx53XyIg';
-
-const ROSTER_SHEET_ID = '1VxxqmOVuXffLOpPvMWnSUHhyhkjIajtBeBoSV3xk1fc';
-const ROSTER_TAB = 'Roster';
-
-const FORM_RESPONSES_SHEET_ID = '1ugM0iOCwdaQpyDVPuJQfKRhu72NQrtC-hEjJ7PkGHoA';
-const FORM_RESPONSES_TAB = 'Form Responses 1';
-const HC_ACTIONS_SHEET_ID = '1TmlmzNPi-BtLy1C4sizqJmvLFHAxyH6Glb9mWP3Vv64';
-const HC_ACTIONS_TAB = 'HC Actions';
-
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxtHKdTr2WJxELcTo9SY6onZOCihhAckG5qaWgyRUF2FwzFchdz4CE2OXa4wt_uuUQYEw/exec';
-const DATA_WINDOW_WEEKS = 16;
-
-// ─── STATE ───────────────────────────────────────────────────────────────────
-let rosterRaw = [];
-let formResponsesRaw = [];
-
-// ─── COACHING WEEK HELPERS ───────────────────────────────────────────────────
-// Coaching Week runs Friday 12:00am to Thursday 11:59:59pm.
-// The week is labeled with the ISO week number that contains its closing Thursday.
-// Example: Coaching Week running Fri May 1 → Thu May 7, 2026 is labeled CW19
-// (because Thu May 7, 2026 falls in ISO week 19).
-
-function getCoachingWeekRange(date) {
-  // Returns { start, end } for the Coaching Week containing the given date.
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  // getDay(): Sun=0, Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6
-  // We want to walk back to the most recent Friday (or stay if today is Friday).
-  const day = d.getDay();
-  const daysSinceFriday = (day - 5 + 7) % 7; // Fri=0, Sat=1, Sun=2, Mon=3, Tue=4, Wed=5, Thu=6
-  const start = new Date(d);
-  start.setDate(d.getDate() - daysSinceFriday);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6); // Friday + 6 = Thursday
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
-}
-
-function getCoachingWeek(date) {
-  // Returns { year, week } using ISO week numbering of the closing Thursday.
-  const range = getCoachingWeekRange(date);
-  const thursday = range.end;
-  // Standard ISO week calculation on the Thursday.
-  const d = new Date(Date.UTC(thursday.getFullYear(), thursday.getMonth(), thursday.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return { year: d.getUTCFullYear(), week: weekNum };
-}
-
-function fmtMonthDay(date) {
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${months[date.getMonth()]} ${date.getDate()}`;
-}
-
-function fmtTime(date) {
-  const h = date.getHours();
-  const m = String(date.getMinutes()).padStart(2,'0');
-  const s = String(date.getSeconds()).padStart(2,'0');
-  return `${String(h).padStart(2,'0')}:${m}:${s}`;
-}
-
-// ─── FETCH ───────────────────────────────────────────────────────────────────
-async function fetchSheet(sheetId, tab) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(tab)}?key=${API_KEY}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    let errMsg = `HTTP ${res.status}`;
-    try {
-      const errData = await res.json();
-      errMsg = errData?.error?.message || errMsg;
-    } catch(e) {}
-    throw new Error(`Failed to read sheet ${sheetId.slice(0,12)}... (tab: "${tab}"): ${errMsg}`);
-  }
-  const data = await res.json();
-  const rows = data.values || [];
-  return rows.length > 0 ? rows.slice(1) : [];
-}
-
-// ─── INIT ────────────────────────────────────────────────────────────────────
-async function init() {
-  document.getElementById('loading-screen').classList.remove('hidden');
-  document.getElementById('error-screen').classList.add('hidden');
-
-  try {
-    if (!API_KEY || API_KEY.length < 20) {
-      throw new Error('API key not configured. Edit index.html and set the API_KEY constant to your actual API key.');
-    }
-
-    document.getElementById('loading-text').textContent = 'Loading Active Roster...';
-    rosterRaw = await fetchSheet(ROSTER_SHEET_ID, ROSTER_TAB);
-    console.log(`Roster loaded: ${rosterRaw.length} rows`);
-    if (rosterRaw.length > 0) console.log('First roster row:', rosterRaw[0]);
-
-    document.getElementById('loading-text').textContent = 'Loading Form Responses...';
-    formResponsesRaw = await fetchSheet(FORM_RESPONSES_SHEET_ID, FORM_RESPONSES_TAB);
-    console.log(`Form Responses loaded: ${formResponsesRaw.length} rows`);
-    if (formResponsesRaw.length > 0) console.log('First form response row:', formResponsesRaw[0]);
-
-    document.getElementById('loading-text').textContent = 'Rendering...';
-    render();
-
-    document.getElementById('loading-screen').classList.add('hidden');
-  } catch(err) {
-    console.error('Init failed:', err);
-    document.getElementById('loading-screen').classList.add('hidden');
-    document.getElementById('error-screen').classList.remove('hidden');
-    document.getElementById('error-msg').textContent = err.message || 'Unknown error. Check console for details.';
-  }
-}
-
-// ─── RENDER ──────────────────────────────────────────────────────────────────
-function render() {
-  const now = new Date();
-  const cw = getCoachingWeek(now);
-  const range = getCoachingWeekRange(now);
-  document.getElementById('week-id').textContent = `CW${String(cw.week).padStart(2,'0')}`;
-  document.getElementById('week-range').textContent = `${fmtMonthDay(range.start)}–${fmtMonthDay(range.end)}, ${cw.year}`;
-
-  document.getElementById('stat-roster').textContent = rosterRaw.length;
-  document.getElementById('stat-forms').textContent = formResponsesRaw.length;
-  document.getElementById('stat-refresh').textContent = fmtTime(now);
-}
-
-// ─── REFRESH ─────────────────────────────────────────────────────────────────
-async function refresh() {
-  const btn = document.getElementById('refresh-btn');
-  btn.disabled = true;
-  await init();
-  btn.disabled = false;
-}
-
-// ─── TABS ────────────────────────────────────────────────────────────────────
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const tab = btn.dataset.tab;
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
-  });
-});
-
-// ─── START ───────────────────────────────────────────────────────────────────
-init();
-</script>
 </body>
 </html>
