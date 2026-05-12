@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Pathway Engine Tests (3e-2 + 3e-3)</title>
+<style>
+  body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; max-width: 980px; margin: auto; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: #666; margin-bottom: 16px; font-size: 12px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #444; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 24px; }
+  .summary { padding: 12px; border-radius: 6px; margin: 16px 0; font-weight: 600; }
+  .summary.ok { background: #e6f7ec; color: #0a6b2c; border: 1px solid #b6e2c5; }
+  .summary.bad { background: #fde8e8; color: #8a1f1f; border: 1px solid #f1c0c0; }
+  .test { padding: 6px 10px; border-radius: 4px; margin: 4px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .pass { background: #f0f9f3; color: #0a6b2c; }
+  .fail { background: #fdecec; color: #8a1f1f; }
+  .fail pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 11.5px; color: #5a1414; }
+</style>
+</head>
+<body>
+<h1>Pathway Engine Tests — Step 3e-2 + 3e-3</h1>
+<div class="meta">Black Flag Tracker + Integrated calculateClientState</div>
+<div id="summary" class="summary">Running…</div>
+<div id="results"></div>
+
+<!-- Engine modules in dependency order. -->
+<script src="./coaching-week.js"></script>
+<script src="./client-timeline.js"></script>
+<script src="./consecutive-evaluable.js"></script>
+<script src="./pathway-evaluators.js"></script>
+<script src="./color-deriver.js"></script>
+<script src="./pathway-engine.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  var results = document.getElementById("results");
+  var summary = document.getElementById("summary");
+  var groupEl = null;
+  var passed = 0;
+  var failed = 0;
+
+  function group(name) {
+    var h = document.createElement("h2");
+    h.textContent = name;
+    results.appendChild(h);
+    groupEl = h;
+  }
+
+  function test(name, fn) {
+    var div = document.createElement("div");
+    div.className = "test";
+    try {
+      fn();
+      passed++;
+      div.classList.add("pass");
+      div.textContent = "PASS  " + name;
+    } catch (e) {
+      failed++;
+      div.classList.add("fail");
+      var pre = document.createElement("pre");
+      pre.textContent = (e && e.message) || String(e);
+      div.textContent = "FAIL  " + name;
+      div.appendChild(pre);
+    }
+    results.appendChild(div);
+  }
+
+  function assertEq(actual, expected, msg) {
+    if (actual !== expected) {
+      throw new Error(
+        (msg || "Expected") + ": got " + JSON.stringify(actual) +
+        ", expected " + JSON.stringify(expected)
+      );
+    }
+  }
+
+  function assertTrue(cond, msg) {
+    if (!cond) throw new Error(msg || "Expected true");
+  }
+
+  // -------------------------------------------------------------------------
+  // Sanity checks: dependencies loaded
+  // -------------------------------------------------------------------------
+  group("Sanity");
+
+  test("All dependencies loaded", function () {
+    assertTrue(window.ConsecutiveEvaluable, "ConsecutiveEvaluable missing");
+    assertTrue(window.ClientTimeline, "ClientTimeline missing");
+    assertTrue(window.PathwayEvaluators, "PathwayEvaluators missing");
+    assertTrue(window.ColorDeriver, "ColorDeriver missing");
+    assertTrue(window.PathwayEngine, "PathwayEngine missing");
+    assertTrue(typeof window.PathwayEngine.calculateBlackFlagStatus === "function");
+    assertTrue(typeof window.PathwayEngine.calculateClientState === "function");
+  });
+
+  // -------------------------------------------------------------------------
+  // Fixture builders
+  // -------------------------------------------------------------------------
+  function mkWeek(opts) {
+    opts = opts || {};
+    var status = opts.status || "evaluable";
+    var weekIndex = opts.weekIndex != null ? opts.weekIndex : 0;
+    var start = opts.weekStart || new Date(2026, 0, 2 + weekIndex * 7);
+    var end = opts.weekEnd ||
+      new Date(start.getTime() + 6 * 86400000 + (23 * 3600 + 59 * 60 + 59) * 1000);
+    var rec = {
+      weekId: opts.weekId || ("2026-W" + String(weekIndex + 1).padStart(2, "0")),
+      weekIndex: weekIndex,
+      status: status,
+      weekStart: start,
+      weekEnd: end,
+      submissionCount: status === "missing" ? 0 : 1,
+      rawSubmissions: []
+    };
+    if (status === "evaluable") {
+      rec.points = opts.points != null ? opts.points : 0;
+      rec.failedStandards = opts.failedStandards || [];
+      rec.passedStandards = opts.passedStandards || [
+        "Check-In Submission",
+        "Training Adherence",
+        "Nutrition Adherence",
+        "Movement Target",
+        "Technique Feedback"
+      ];
+      rec.callRequested = opts.callRequested == null ? null : opts.callRequested;
+      rec.notes = opts.notes || null;
+      rec.loomLink = opts.loomLink || null;
+    }
+    return rec;
+  }
+
+  function mkTimeline(weeks) {
+    return weeks.map(function (w, i) {
+      return mkWeek(Object.assign({}, w, { weekIndex: i }));
+    });
+  }
+
+  function mkAction(opts) {
+    return {
+      timestamp: opts.timestamp,
+      actionWeek: opts.actionWeek || null,
+      client: opts.client || "Test Client",
+      coach: opts.coach || "Test Coach",
+      pathway: opts.pathway || null,
+      standard: opts.standard || null,
+      actionType: opts.actionType,
+      notes: opts.notes || null,
+      outcome: opts.outcome || null,
+      followUpDueDate: opts.followUpDueDate || null,
+      actionId: opts.actionId || ("act-" + Math.random().toString(36).slice(2, 8))
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // PART A: Black Flag Tracker
+  // -------------------------------------------------------------------------
+  group("Black Flag Tracker — Happy path");
+
+  test("No HC actions -> no black flag", function () {
+    var tl = mkTimeline([{}, {}, {}]);
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, []);
+    assertEq(res.count, 0);
+    assertEq(res.active, false);
+    assertEq(res.lastTriggeredAt, null);
+    assertEq(res.lastResetAt, null);
+    assertEq(res.consecutiveGreenWeeks, 0);
+    assertEq(res.sourceRows.length, 0);
+  });
+
+  test("Single trigger, <6 green weeks after -> active flag", function () {
+    var tl = mkTimeline([{}, {}, {}, {}, {}, {}]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 18),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-trigger-1"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.count, 1);
+    assertEq(res.active, true);
+    assertEq(res.sourceRows[0], "act-trigger-1");
+    assertEq(res.consecutiveGreenWeeks, 3);
+  });
+
+  test("Trigger + explicit removal -> no active flag", function () {
+    var tl = mkTimeline([{}, {}, {}, {}, {}]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 5),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-1"
+      }),
+      mkAction({
+        timestamp: new Date(2026, 0, 20),
+        actionType: "Black Flag: Removed",
+        actionId: "act-2"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.count, 0);
+    assertEq(res.active, false);
+    assertTrue(res.lastTriggeredAt !== null);
+  });
+
+  test("Trigger + Manual Override removal -> no active flag", function () {
+    var tl = mkTimeline([{}, {}, {}, {}, {}]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 5),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-1"
+      }),
+      mkAction({
+        timestamp: new Date(2026, 0, 20),
+        actionType: "Manual Override: Black Flag Removed",
+        actionId: "act-2"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.count, 0);
+    assertEq(res.active, false);
+  });
+
+  group("Black Flag Tracker — Auto-removal");
+
+  test("Trigger + 6 consecutive green weeks -> auto-removal", function () {
+    var tl = mkTimeline([{}, {}, {}, {}, {}, {}, {}, {}]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 3),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-1"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.count, 0, "count should be 0 after auto-removal");
+    assertEq(res.active, false);
+    assertTrue(res.lastResetAt !== null, "lastResetAt should be set");
+  });
+
+  test("Trigger + 5 green weeks then 1 fail -> still active", function () {
+    var tl = mkTimeline([
+      {}, {}, {}, {}, {}, {},
+      { points: 5, failedStandards: ["Check-In Submission"] },
+      {}
+    ]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 3),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-1"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.active, true);
+    assertEq(res.count, 1);
+    assertEq(res.consecutiveGreenWeeks, 5);
+  });
+
+  test("Exempt + Missing weeks skipped in green-streak count", function () {
+    var tl = mkTimeline([
+      {},                                            // 1 trigger week
+      {}, {},                                        // 2,3 green
+      { status: "exempt" },                          // 4 exempt
+      { status: "missing" },                         // 5 missing
+      {}, {}, {}, {}                                 // 6-9 green (6 evaluable green total)
+    ]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 3),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-1"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.active, false, "auto-removed via 6 evaluable greens");
+    assertEq(res.count, 0);
+  });
+
+  group("Black Flag Tracker — Re-flag and filtering");
+
+  test("Re-flag after removal: only second trigger is active", function () {
+    var tl = mkTimeline([{}, {}, {}, {}, {}, {}]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 3),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-1"
+      }),
+      mkAction({
+        timestamp: new Date(2026, 0, 10),
+        actionType: "Black Flag: Removed",
+        actionId: "act-2"
+      }),
+      mkAction({
+        timestamp: new Date(2026, 0, 25),
+        actionType: "Black Flag: Triggered",
+        actionId: "act-3"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.count, 1);
+    assertEq(res.active, true);
+    assertEq(res.sourceRows[0], "act-3");
+  });
+
+  test("Actions for other clients are ignored", function () {
+    var tl = mkTimeline([{}, {}, {}]);
+    var actions = [
+      mkAction({
+        timestamp: new Date(2026, 0, 3),
+        actionType: "Black Flag: Triggered",
+        client: "Other Client",
+        actionId: "act-1"
+      })
+    ];
+    var res = window.PathwayEngine.calculateBlackFlagStatus("Test Client", tl, actions);
+    assertEq(res.count, 0);
+  });
+
+  // -------------------------------------------------------------------------
+  // PART B: Integrated calculateClientState
+  // -------------------------------------------------------------------------
+  group("calculateClientState — Pipeline integration");
+
+  test("Empty inputs -> Green, no black flag, valid shape", function () {
+    var state = window.PathwayEngine.calculateClientState("Test Client", [], [], {
+      currentDate: new Date(2026, 1, 15)
+    });
+    assertEq(state.clientName, "Test Client");
+    assertEq(state.color, "Green");
+    assertEq(state.dominantPathway, null);
+    assertEq(state.blackFlags.active, false);
+    assertEq(state.blackFlags.count, 0);
+    assertTrue(state.pathwayStates !== undefined);
+    assertTrue(state.pathwayStates.p1 !== undefined);
+    assertTrue(Array.isArray(state.pathwayStates.p2));
+    assertTrue(state.pathwayStates.p3 !== undefined);
+  });
+
+  test("Black flag passes through pipeline", function () {
+    var state = window.PathwayEngine.calculateClientState(
+      "Test Client",
+      [],
+      [
+        mkAction({
+          timestamp: new Date(2026, 0, 3),
+          actionType: "Black Flag: Triggered",
+          actionId: "act-1"
+        })
+      ],
+      { currentDate: new Date(2026, 1, 15) }
+    );
+    assertEq(state.blackFlags.active, true);
+    assertEq(state.blackFlags.count, 1);
+    assertEq(state.blackFlags.sourceRows[0], "act-1");
+  });
+
+  // -------------------------------------------------------------------------
+  // Summary
+  // -------------------------------------------------------------------------
+  if (failed === 0) {
+    summary.className = "summary ok";
+    summary.textContent = "All " + passed + " tests passed.";
+  } else {
+    summary.className = "summary bad";
+    summary.textContent = passed + " passed, " + failed + " failed.";
+  }
+})();
+</script>
+</body>
+</html>
