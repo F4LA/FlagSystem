@@ -10,7 +10,6 @@
  * Scope:
  *   - Per-pathway color derivation (P1, each active P2 standard, P3)
  *   - Overall color resolution + dominant pathway
- *   - Manual Override handling
  *   - Post-Red detection (minimal: enough to suppress reset-to-Green when
  *     the pathway is still under HC tracking)
  *
@@ -18,6 +17,13 @@
  *   - Black Flag counter (3e-2)
  *   - Full Post-Red state machine (3e-3)
  *   - Public calculateClientState API (3e-3)
+ *
+ * Out of scope for v1 of the dashboard (excluded by design):
+ *   - Manual Override: Pathway Closed
+ *   - Manual Override: Color Change
+ *   (Manual Override: Black Flag Removed IS in scope and is handled by the
+ *   Black Flag tracker in 3e-2; it still appears in POST_RED_CLOSE_ACTIONS
+ *   below because it closes the Post-Red phase when used.)
  *
  * UMD pattern. Exposes window.ColorDeriver in the browser.
  *
@@ -29,10 +35,6 @@
  *     original pathway code (P1 / P2 / P3). Post-Red is identified by the
  *     actionType, not by the Pathway column. For P2, the Standard column
  *     identifies which standard the Post-Red attaches to.
- *   - Manual Overrides win over automatic logic until new evaluable data
- *     post-dates the override.
- *   - Manual Override: Color Change uses Notes column with format
- *     "force:Green" | "force:Yellow" | "force:Red".
  *
  * Authoritative reference:
  *   - Flag System Dashboard TDD v1.0, Sections 4 and 5
@@ -75,13 +77,9 @@
   var POST_RED_CLOSE_ACTIONS = [
     "Coach Call Outcome: Resolved",
     "HC Call: Resolved",
-    "Manual Override: Pathway Closed",
     "Manual Override: Black Flag Removed",
     "Black Flag: Triggered"
   ];
-
-  var MANUAL_OVERRIDE_CLOSE = "Manual Override: Pathway Closed";
-  var MANUAL_OVERRIDE_COLOR = "Manual Override: Color Change";
 
   var CALL_REQUESTED_TRIGGERS = [
     "Client accepted",
@@ -103,27 +101,6 @@
     // robustness. Free-typed values would still count as "the coach asked",
     // which matches the operational rule (Q6 was filled in).
     return CALL_REQUESTED_TRIGGERS.indexOf(trimmed) !== -1 || trimmed.length > 0;
-  }
-
-  function lastEvaluableIndex(timeline) {
-    if (!Array.isArray(timeline)) return -1;
-    for (var i = timeline.length - 1; i >= 0; i--) {
-      if (timeline[i] && timeline[i].status === "evaluable") return i;
-    }
-    return -1;
-  }
-
-  function lastEvaluableWeekId(timeline) {
-    var idx = lastEvaluableIndex(timeline);
-    return idx === -1 ? null : timeline[idx].weekId;
-  }
-
-  function lastEvaluableTimestamp(timeline) {
-    var idx = lastEvaluableIndex(timeline);
-    if (idx === -1) return null;
-    var wr = timeline[idx];
-    // weekEnd is preferred (end of Coaching Week). Fall back to weekStart.
-    return wr.weekEnd || wr.weekStart || null;
   }
 
   function toDate(value) {
@@ -210,91 +187,28 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Manual Override resolution
-  //
-  // Returns the active override for a pathway, or null. An override is
-  // "active" if it is the most recent override of its kind AND there is no
-  // evaluable timeline data after the override timestamp.
-  //
-  // The override carries:
-  //   - kind: "close" | "color"
-  //   - forcedColor: "Green" | "Yellow" | "Red" (only for "color")
-  // ---------------------------------------------------------------------------
-  function resolveOverride(actions, pathwayCode, standard, lastEvalTs) {
-    var relevant = actionsForPathway(actions, pathwayCode, standard).filter(function (row) {
-      return (
-        row.actionType === MANUAL_OVERRIDE_CLOSE ||
-        row.actionType === MANUAL_OVERRIDE_COLOR
-      );
-    });
-    if (relevant.length === 0) return null;
-
-    var sorted = sortActionsChronological(relevant);
-    var latest = sorted[sorted.length - 1];
-    var overrideTs = toDate(latest.timestamp);
-    if (!overrideTs) return null;
-
-    // Override is invalidated if new evaluable data exists after it.
-    if (lastEvalTs) {
-      var evalTs = toDate(lastEvalTs);
-      if (evalTs && evalTs.getTime() > overrideTs.getTime()) {
-        return null;
-      }
-    }
-
-    if (latest.actionType === MANUAL_OVERRIDE_CLOSE) {
-      return { kind: "close", forcedColor: COLORS.GREEN };
-    }
-    // Color change: parse Notes for "force:<Color>"
-    var notes = latest.notes ? String(latest.notes).trim() : "";
-    var match = notes.match(/^force:(green|yellow|red)$/i);
-    if (!match) {
-      // Malformed override. Ignore rather than crash.
-      return null;
-    }
-    var color = match[1].toLowerCase();
-    var forced =
-      color === "green" ? COLORS.GREEN :
-      color === "yellow" ? COLORS.YELLOW :
-      COLORS.RED;
-    return { kind: "color", forcedColor: forced };
-  }
-
-  // ---------------------------------------------------------------------------
   // Per-pathway color derivation
   // ---------------------------------------------------------------------------
 
   function colorForPathwayState(state, timeline, actions, pathwayCode, standard) {
-    var lastEvalTs = lastEvaluableTimestamp(timeline);
-
-    // 1. Manual override wins (if active).
-    var override = resolveOverride(actions, pathwayCode, standard, lastEvalTs);
-    if (override) {
-      return {
-        color: override.forcedColor,
-        reason: "override",
-        override: override
-      };
-    }
-
-    // 2. Active Post-Red is sticky: it holds the pathway above Green even
+    // 1. Active Post-Red is sticky: it holds the pathway above Green even
     //    if the streak has cleared. This handles the case where the coach
     //    call happened, did not resolve, and HC is now following up
     //    directly. The pathway needs to stay visible until Post-Red closes.
     var postRedActive = hasActivePostRed(actions, pathwayCode, standard);
 
-    // 3. Pathway not active AND no Post-Red -> Green.
+    // 2. Pathway not active AND no Post-Red -> Green.
     if (!state.active && !postRedActive) {
       return { color: COLORS.GREEN, reason: "not-active" };
     }
 
-    // 4. Pathway not active BUT Post-Red still open -> keep visibility.
+    // 3. Pathway not active BUT Post-Red still open -> keep visibility.
     //    Color reflects the Post-Red phase, not the (now empty) streak.
     if (!state.active && postRedActive) {
       return { color: COLORS.YELLOW, reason: "post-red-tracking" };
     }
 
-    // 5. Reset ready -> Green, unless Post-Red still tracking this pathway.
+    // 4. Reset ready -> Green, unless Post-Red still tracking this pathway.
     //    Note: in practice resetReady flips at the same time as active flips
     //    to false, so this branch mostly triggers when there is a partial
     //    reset signal mid-streak. Kept for explicit clarity.
@@ -302,7 +216,7 @@
       return { color: COLORS.GREEN, reason: "reset" };
     }
 
-    // 6. RedWindow + coach asked for call -> Red.
+    // 5. RedWindow + coach asked for call -> Red.
     if (state.expectedAction === "RedWindow") {
       var streakWeeks = state.streakWeeks || [];
       var mostRecent = streakWeeks.length > 0 ? streakWeeks[streakWeeks.length - 1] : null;
@@ -313,12 +227,12 @@
       return { color: COLORS.YELLOW, reason: "red-window-awaiting-call" };
     }
 
-    // 7. Notification or Warning -> Yellow.
+    // 6. Notification or Warning -> Yellow.
     if (state.expectedAction === "Notification" || state.expectedAction === "Warning") {
       return { color: COLORS.YELLOW, reason: state.expectedAction.toLowerCase() };
     }
 
-    // 8. Active but no expected action (shouldn't happen if 3d is consistent):
+    // 7. Active but no expected action (shouldn't happen if 3d is consistent):
     // treat as Green for safety.
     return { color: COLORS.GREEN, reason: "no-action-due" };
   }
@@ -488,10 +402,8 @@
     _internal: {
       colorForPathwayState: colorForPathwayState,
       hasActivePostRed: hasActivePostRed,
-      resolveOverride: resolveOverride,
       isCallRequestedRedTrigger: isCallRequestedRedTrigger,
       matchesStandard: matchesStandard,
-      lastEvaluableTimestamp: lastEvaluableTimestamp,
       COLORS: COLORS,
       COLOR_SEVERITY: COLOR_SEVERITY,
       PATHWAY_PRIORITY: PATHWAY_PRIORITY,
