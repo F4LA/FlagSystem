@@ -48,29 +48,20 @@
     </section>
 
     <section class="tab-panel" id="panel-roster">
-      <div class="placeholder">
-        <h2>Client Roster</h2>
-        <p>Coming in v1.1</p>
-      </div>
+      <div id="roster-content"></div>
     </section>
 
     <section class="tab-panel" id="panel-patterns">
-      <div class="placeholder">
-        <h2>Coach Patterns</h2>
-        <p>Coming in v1.1</p>
-      </div>
+      <div id="patterns-content"></div>
     </section>
 
     <section class="tab-panel" id="panel-black">
-      <div class="placeholder">
-        <h2>Black Flagged Clients</h2>
-        <p>Coming in v1.1</p>
-      </div>
+      <div id="black-content"></div>
     </section>
 
   </main>
 
-  <!-- Slack modal -->
+  <!-- Slack modal (Tab 1) -->
   <div class="modal-backdrop hidden" id="slack-modal-backdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <header class="modal-header">
@@ -87,6 +78,34 @@
           <span id="modal-copy-label">Copy</span>
         </button>
         <button class="btn btn-primary" type="button" id="modal-mark-sent">Mark sent →</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Pathway Detail modal (shared, Tabs 2/3/4) -->
+  <div class="pd-modal-backdrop hidden" id="pd-modal-backdrop">
+    <div class="pd-modal" role="dialog" aria-modal="true" aria-labelledby="pd-modal-title">
+      <header class="pd-modal-header">
+        <h2 id="pd-modal-title">CLIENT DETAIL</h2>
+        <button class="pd-modal-close" type="button" id="pd-modal-close" aria-label="Close">×</button>
+      </header>
+      <div class="pd-modal-body" id="pd-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Coach Audit Note modal (Tab 3) -->
+  <div class="note-modal-backdrop hidden" id="note-modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="note-modal-title">
+      <header class="modal-header">
+        <h2 id="note-modal-title">Add HC Note</h2>
+        <button class="modal-close" type="button" id="note-modal-close" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-meta" id="note-modal-meta"></p>
+        <textarea class="modal-textarea" id="note-modal-textarea" rows="8" spellcheck="true"></textarea>
+      </div>
+      <footer class="modal-footer">
+        <button class="btn btn-primary" type="button" id="note-modal-save">Save note</button>
       </footer>
     </div>
   </div>
@@ -110,6 +129,10 @@
   <script src="dashboard/queue-builder.js"></script>
   <script src="dashboard/actions-writer.js"></script>
   <script src="dashboard/tab1.js"></script>
+  <script src="dashboard/pathway-detail.js"></script>
+  <script src="dashboard/tab2.js"></script>
+  <script src="dashboard/tab3.js"></script>
+  <script src="dashboard/tab4.js"></script>
   <script src="app.js"></script>
 
 </body>
