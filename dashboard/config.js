@@ -19,8 +19,8 @@
 
   root.FlagConfig = {
     // ===== Replace after deploy =====
-    SHEETS_API_KEY: "REPLACE_WITH_RESTRICTED_KEY",
-    APPS_SCRIPT_URL: "REPLACE_AFTER_DEPLOY",
+    SHEETS_API_KEY: "AIzaSyCbpE8CmLKpfmbMPLXkEmWe-5zEx53XyIg",
+    APPS_SCRIPT_URL: "https://script.google.com/macros/s/AKfycbwHne-CZKkMfoKiy__YQcnSHLmaXdOxuFc0DPHJugYPkAI96nXlXAoreoflRwf-g6OP2A/exec",
 
     // ===== Sheet identifiers (locked) =====
     ROSTER: {
