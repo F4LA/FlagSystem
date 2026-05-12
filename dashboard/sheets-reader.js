@@ -55,8 +55,10 @@
     var seen = Object.create(null);
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i] || [];
-      var client = (r[0] || "").toString().trim();
-      var coach  = (r[5] || "").toString().trim();
+      var first = (r[0] || "").toString().trim();
+      var last  = (r[1] || "").toString().trim();
+      var coach = (r[5] || "").toString().trim();
+      var client = (first + " " + last).trim();
       if (!client) continue;
       var key = client.toLowerCase();
       if (seen[key]) continue;
@@ -65,7 +67,6 @@
     }
     return out;
   }
-
   // ---------- Form Responses ----------
   // Engine accepts raw arrays in normalizeSubmission. We pass them through
   // unchanged, with only a basic shape guarantee (8 columns).
