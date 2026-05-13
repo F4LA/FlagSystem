@@ -258,11 +258,20 @@
   }
 
   function renderCoachAction(a, groupIdx, rowIdx) {
-    var sevClass = a.color === "Red" ? "sev-red" :
-                   a.color === "Yellow" ? "sev-yellow" : "sev-green";
-    var typeClass = a.actionType === "Slack: Warning" ? "warning" :
-                    (a.color === "Red" ? "red-window" : "notification");
-    var typeLabel = a.actionLabel || a.actionType;
+    // a is now a ConsolidatedClientAction:
+    //   { client, coach, level: "Warning"|"Notification", actionType,
+    //     warnings: [], notifications: [], pathwayLabel,
+    //     warningsDetail: [], notificationsDetail: [] }
+    var sevClass = a.level === "Warning" ? "sev-yellow" : "sev-yellow";
+    // Warnings get a darker yellow visually; we still use sev-yellow class
+    // but add a modifier so styling can differentiate.
+    var levelClass = a.level === "Warning" ? "warning" : "notification";
+    var typeLabel = a.actionType;
+
+    // Build a detailed second line that shows the consolidated pathways.
+    // Example: "P2 Nutrition Week 3 + P3 Week 4 (+1 heads-up)"
+    var detailParts = (a.warningsDetail || []).concat(a.notificationsDetail || []);
+    var detailLine = detailParts.length > 0 ? detailParts.join(" · ") : a.pathwayLabel;
 
     var html = '<div class="action-row ' + sevClass + '" ' +
                'data-coach-idx="' + groupIdx + '" data-row-idx="' + rowIdx + '">';
@@ -271,7 +280,10 @@
     html += '<div class="action-client">' + esc(a.client) + '</div>';
     html += '<div class="action-detail">';
     html += '<span class="pathway-tag">' + esc(a.pathwayLabel) + '</span>';
-    html += '<span class="action-type-tag ' + typeClass + '">' + esc(typeLabel) + '</span>';
+    html += '<span class="action-type-tag ' + levelClass + '">' + esc(typeLabel) + '</span>';
+    if (detailParts.length > 1) {
+      html += '<div style="margin-top:4px; font-size:11px; color:var(--text-faint);">' + esc(detailLine) + '</div>';
+    }
     html += '</div></div>';
     html += '<div class="action-buttons">';
     html += '<button class="action-btn action-btn-primary js-generate-slack" type="button">Generate Slack</button>';
@@ -341,17 +353,12 @@
         var gIdx = parseInt(row.getAttribute("data-coach-idx"), 10);
         var rIdx = parseInt(row.getAttribute("data-row-idx"), 10);
         var action = queue.coachGroups[gIdx].actions[rIdx];
-        var td = action.templateData || {};
-        var d = {
-          client_name: action.client,
-          pathway: action.pathway,
-          standard: action.standard,
-          standards_list_recent: td.standards_list_recent || [],
-          standards_list_previous: td.standards_list_previous || []
-        };
+
         var msg;
         try {
-          msg = root.SlackTemplates.buildSlackMessage(action.actionType, d);
+          // v2 API: pass the consolidated action directly. Slack templates
+          // dispatches single vs multi-pathway internally.
+          msg = root.SlackTemplates.buildSlackMessage(action);
         } catch (err) {
           toast("Cannot build Slack message: " + err.message, "error");
           return;
@@ -359,11 +366,17 @@
         var meta = action.coach + " &middot; " + action.pathwayLabel + " &middot; " + action.actionType;
         document.getElementById("modal-meta").innerHTML = meta;
 
+        // Logging payload uses a representative pathway from the action.
+        // For multi-pathway actions, we store the level ("Warning" or
+        // "Notification") on the actionType column and put the full client
+        // context in notes. Pathway column gets the primary pathway
+        // (first warning if any, else first notification).
+        var primary = (action.warnings[0] || action.notifications[0]);
         var payload = {
           client: action.client,
           coach: action.coach,
-          pathway: action.pathway,
-          standard: action.standard,
+          pathway: primary ? primary.pathway : "N/A",
+          standard: primary ? (primary.standard || null) : null,
           actionType: action.actionType,
           notes: msg.text,
           outcome: null,
@@ -372,7 +385,6 @@
         };
 
         openSlackModal(payload, msg.text, meta, function () {
-          // Disable both buttons on the originating row.
           row.querySelectorAll(".action-btn").forEach(function (b) {
             b.disabled = true;
           });
@@ -381,18 +393,19 @@
       });
     });
 
-    // "Mark sent" without opening the modal (HC already sent manually).
+    // "Mark sent" without opening the modal.
     document.querySelectorAll(".js-mark-sent-direct").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var row = btn.closest(".action-row");
         var gIdx = parseInt(row.getAttribute("data-coach-idx"), 10);
         var rIdx = parseInt(row.getAttribute("data-row-idx"), 10);
         var action = queue.coachGroups[gIdx].actions[rIdx];
+        var primary = (action.warnings[0] || action.notifications[0]);
         var payload = {
           client: action.client,
           coach: action.coach,
-          pathway: action.pathway,
-          standard: action.standard,
+          pathway: primary ? primary.pathway : "N/A",
+          standard: primary ? (primary.standard || null) : null,
           actionType: action.actionType,
           notes: null,
           outcome: null,
