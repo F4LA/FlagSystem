@@ -327,10 +327,12 @@
       };
     });
 
-    var concentrationScore = top3.reduce(function (acc, c) {
-      return acc + c.percentage;
+    // Compute concentrationScore from raw flag counts (not by summing
+    // already-rounded percentages, which accumulates rounding drift).
+    var top3Sum = top3.reduce(function (acc, c) {
+      return acc + c.flagCount;
     }, 0);
-    concentrationScore = round1(concentrationScore);
+    var concentrationScore = totalFlags > 0 ? round1((top3Sum / totalFlags) * 100) : 0;
 
     var concentrationLevel;
     if (totalFlags === 0) {
@@ -395,9 +397,16 @@
   function calculatePathwayChronicity(currentStates, formResponses, hcActions, roster, coachName, opts) {
     opts = opts || {};
     var weeksBack = opts.weeksBack || 12;
+    // Look up FlagConfig from the global scope (browser: window.FlagConfig).
+    // The factory closure doesn't have access to the UMD `root` variable,
+    // so we read it from the runtime global at call time.
+    var globalScope = typeof window !== "undefined" ? window
+                    : typeof self !== "undefined" ? self
+                    : typeof global !== "undefined" ? global
+                    : {};
     var lookbackWeeks =
       opts.lookbackWeeks ||
-      (root.FlagConfig && root.FlagConfig.LOOKBACK_WEEKS) ||
+      (globalScope.FlagConfig && globalScope.FlagConfig.LOOKBACK_WEEKS) ||
       16;
     var currentDate = toDate(opts.currentDate) || new Date();
 
