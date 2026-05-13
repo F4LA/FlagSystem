@@ -363,8 +363,8 @@
           toast("Cannot build Slack message: " + err.message, "error");
           return;
         }
-        var meta = action.coach + " &middot; " + action.pathwayLabel + " &middot; " + action.actionType;
-        document.getElementById("modal-meta").innerHTML = meta;
+        var meta = action.coach + " · " + action.pathwayLabel + " · " + action.actionType;
+        document.getElementById("modal-meta").textContent = meta;
 
         // Logging payload uses a representative pathway from the action.
         // For multi-pathway actions, we store the level ("Warning" or
