@@ -23,15 +23,16 @@
 <div id="summary" class="summary">Running…</div>
 <div id="results"></div>
 
-<!-- Engine modules in dependency order -->
-<script src="./coaching-week.js"></script>
-<script src="./client-timeline.js"></script>
-<script src="./consecutive-evaluable.js"></script>
-<script src="./pathway-evaluators.js"></script>
-<script src="./color-deriver.js"></script>
-<script src="./pathway-engine.js"></script>
+<!-- Engine modules in dependency order. The test file lives in /dashboard/,
+     so engine modules are reached via ../engine/. -->
+<script src="../engine/coaching-week.js"></script>
+<script src="../engine/client-timeline.js"></script>
+<script src="../engine/consecutive-evaluable.js"></script>
+<script src="../engine/pathway-evaluators.js"></script>
+<script src="../engine/color-deriver.js"></script>
+<script src="../engine/pathway-engine.js"></script>
 
-<!-- Aggregators (module under test) -->
+<!-- Aggregators (module under test). Same directory as this file. -->
 <script src="./coach-diagnostics-aggregators.js"></script>
 
 <script>
