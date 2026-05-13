@@ -826,9 +826,6 @@ button { font-family: inherit; }
   font-size: 12.5px;
 }
 .roster-table-head {
-  position: sticky;
-  top: 96px;
-  z-index: 5;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
   font-size: 11px;
