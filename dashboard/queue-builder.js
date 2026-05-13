@@ -1,14 +1,31 @@
 /**
- * Flag System Dashboard — Queue Builder
+ * Flag System Dashboard — Queue Builder (v2: consolidated per client)
  *
  * Slices the full client-state list and the HC Actions log into the
- * three sections of Tab 1 (Friday Action Queue), per TDD v1.0 §5.1.
+ * three sections of Tab 1 (Friday Action Queue), per TDD v1.0 §5.1
+ * with the operational rule update of May 2026:
+ *
+ *   ONE ACTION PER CLIENT. When a client has multiple active pathways,
+ *   they consolidate into a single Slack to the coach based on:
+ *
+ *     1. Red wins: if any pathway has color Red and not in Post-Red
+ *        tracking, the client goes to Direct Client Actions (Post-Red
+ *        Resolution Path). No combined Slack.
+ *
+ *     2. Warning level (urgency = "ask for direct call"):
+ *        All active Warnings combine. If Notifications are ALSO active,
+ *        they get appended as secondary heads-up context.
+ *
+ *     3. Notification level (urgency = "call-out on next check-in"):
+ *        Only fires if NO Warning is active. All active Notifications
+ *        combine into a single call-out message.
+ *
+ *   Slack templates handle the multi-pathway rendering. queue-builder
+ *   only produces the consolidated action descriptor.
  *
  * Sections:
- *   COACHES: pathway-driven actions to deliver to coaches via Slack.
- *     Each entry = one pathway state needing Notification, Warning, or
- *     a RedWindow case that still needs a Slack from HC.
- *     Grouped by coach. Ordered Red → Yellow Warning → Yellow Notification.
+ *   COACHES: one entry per client needing coach-facing Slack.
+ *     Grouped by coach. Ordered Warning-level first, then Notification.
  *
  *   DIRECT CLIENT ACTIONS: Post-Red flow items.
  *     Clients with an open Post-Red action chain (HC email/call pending).
@@ -21,9 +38,7 @@
 
   // ---------- ISO week helpers ----------
   function isoWeekKey(date) {
-    // Returns "YYYY-Www" per ISO 8601.
     var d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    // Thursday in current week determines the year.
     var dayNum = d.getUTCDay() || 7;
     d.setUTCDate(d.getUTCDate() + 4 - dayNum);
     var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
@@ -31,118 +46,125 @@
     return d.getUTCFullYear() + "-W" + (weekNum < 10 ? "0" + weekNum : weekNum);
   }
 
-  // Severity rank for ordering inside a coach group.
-  // Lower number = more urgent (sorted ascending).
-  function severityRank(pathwayEntry) {
-    // Red first
-    if (pathwayEntry.color === "Red") return 0;
-    // Yellow Warning
-    if (pathwayEntry.colorReason === "warning") return 1;
-    // Yellow RedWindow awaiting call (treat as Warning-level urgency)
-    if (pathwayEntry.colorReason === "red-window-awaiting-call") return 1;
-    // Yellow Notification
-    if (pathwayEntry.colorReason === "notification") return 2;
-    return 3;
-  }
-
-  // Decide the Slack action type to log when HC clicks "Mark sent".
-  function slackActionTypeFor(pathwayEntry) {
-    if (pathwayEntry.colorReason === "warning") return "Slack: Warning";
-    if (pathwayEntry.colorReason === "notification") return "Slack: Notification";
-    if (pathwayEntry.colorReason === "red-window-call-asked") return "Slack: Warning";
-    if (pathwayEntry.colorReason === "red-window-awaiting-call") return "Slack: Warning";
-    return "Slack: Notification";
-  }
-
-  // Display label for the action type column in the row.
-  function actionLabelFor(pathwayEntry) {
-    if (pathwayEntry.color === "Red") return "Slack: Warning (Red)";
-    if (pathwayEntry.colorReason === "warning") return "Slack: Warning";
-    if (pathwayEntry.colorReason === "red-window-awaiting-call") return "Slack: Warning";
-    if (pathwayEntry.colorReason === "notification") return "Slack: Notification";
-    return null;
-  }
-
-  function pathwayLabel(entry) {
-    // Examples: "P1 Week 2", "P2 Nutrition Week 3", "P3 Week 4"
-    var weekN = entry.streakLength || entry.weekOfPathway || 0;
+  // ---------- Pathway descriptor helpers ----------
+  function pathwayShortLabel(entry) {
+    // "P1", "P2 Nutrition", "P3"
     if (entry.pathway === "P2") {
       var short = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
       var s = short[entry.standard] || entry.standard;
-      return "P2 " + s + " Week " + weekN;
+      return "P2 " + s;
     }
-    return entry.pathway + " Week " + weekN;
+    return entry.pathway;
   }
 
-  // Extract every pathway state that needs a coach-facing Slack right now.
-  // Yields one entry per pathway (P1, each active P2, P3) per client.
-  function collectCoachActions(state) {
-    var out = [];
+  function pathwayLabelWithWeek(entry) {
+    var weekN = entry.streakLength || entry.weekOfPathway || 0;
+    return pathwayShortLabel(entry) + " Week " + weekN;
+  }
+
+  // Build a normalized entry that we can iterate over uniformly. P2 array
+  // gets one normalized entry per active standard.
+  function flattenActivePathways(state) {
     var ps = state.pathwayStates || {};
-
-    function consider(entry) {
-      if (!entry || !entry.active) {
-        // Post-Red tracking (active=false but colorReason=post-red-tracking)
-        // is handled in collectDirectClientActions, not here.
-        return;
-      }
-      if (entry.color === "Green") return;
-      // Skip RedWindow cases where coach already asked for call — handled
-      // via Post-Red Resolution Path (Direct Client Actions). The HC's
-      // next move is with the client, not the coach.
-      if (entry.colorReason === "red-window-call-asked") return;
-
-      var actionType = slackActionTypeFor(entry);
-      if (!actionType) return;
-
-      out.push({
-        kind: "coach-slack",
-        client: state.clientName,
-        coach: state.coach,
-        pathway: entry.pathway,
-        standard: entry.standard || null,
-        streakLength: entry.streakLength || 0,
-        color: entry.color,
-        colorReason: entry.colorReason,
-        expectedAction: entry.expectedAction,
-        actionType: actionType,
-        actionLabel: actionLabelFor(entry),
-        pathwayLabel: pathwayLabel(entry),
-        templateData: entry.templateData || null
-      });
+    var out = [];
+    if (ps.p1 && ps.p1.active && ps.p1.color !== "Green") {
+      out.push(Object.assign({}, ps.p1, { _key: "P1" }));
     }
-
-    if (ps.p1) consider(ps.p1);
     (ps.p2 || []).forEach(function (p2) {
-      // Attach standard for label/template
-      var withStd = Object.assign({}, p2, { standard: p2.standard });
-      consider(withStd);
+      if (p2 && p2.active && p2.color !== "Green") {
+        out.push(Object.assign({}, p2, { _key: "P2:" + p2.standard }));
+      }
     });
-    if (ps.p3) consider(ps.p3);
+    if (ps.p3 && ps.p3.active && ps.p3.color !== "Green") {
+      out.push(Object.assign({}, ps.p3, { _key: "P3" }));
+    }
     return out;
   }
 
-  // Identify clients in Post-Red Resolution Path. They appear in Direct
-  // Client Actions until a closing action is logged. Determines what
-  // buttons to show based on the latest open action.
+  // ---------- Consolidation rule ----------
   //
-  // POST_RED_OPEN action types (from color-deriver.js):
-  //   "Coach Call Outcome: Did Not Resolve",
-  //   "Coach Call Outcome: Client No Response",
-  //   "Coach Call Outcome: Client Declined",
-  //   "HC Email: Sent",
-  //   "HC Email: Follow-up",
-  //   "HC Call: Scheduled",
-  //   "HC Call: Did Not Resolve"
+  // Returns ONE consolidated action descriptor per client, or null if no
+  // coach-facing Slack is due.
+  //
+  // Output shape:
+  //   {
+  //     kind: "coach-slack",
+  //     client, coach,
+  //     level: "Warning" | "Notification",
+  //     actionType: "Slack: Warning" | "Slack: Notification",
+  //     warnings: [pathwayEntry, ...],    // empty if level is Notification
+  //     notifications: [pathwayEntry, ...], // secondary heads-up if level is Warning
+  //     pathwayLabel: "..."                 // display label for the row
+  //   }
+  function buildClientAction(state) {
+    var actives = flattenActivePathways(state);
+    if (actives.length === 0) return null;
+
+    // Filter out pathways that are in Post-Red tracking. Those are HC
+    // domain, not coach-facing — they go to collectDirectClientActions.
+    var coachFacing = actives.filter(function (e) {
+      // post-red-tracking and red-window-call-asked belong to Direct Client.
+      return e.colorReason !== "post-red-tracking" &&
+             e.colorReason !== "red-window-call-asked";
+    });
+    if (coachFacing.length === 0) return null;
+
+    // Split by level.
+    var warnings = [];
+    var notifications = [];
+    coachFacing.forEach(function (e) {
+      // colorReason values we care about:
+      //   "warning"               -> Warning
+      //   "red-window-awaiting-call" -> Warning level (coach should escalate)
+      //   "notification"          -> Notification
+      if (e.colorReason === "warning" || e.colorReason === "red-window-awaiting-call") {
+        warnings.push(e);
+      } else if (e.colorReason === "notification") {
+        notifications.push(e);
+      }
+    });
+
+    if (warnings.length === 0 && notifications.length === 0) return null;
+
+    var level, actionType, pathwayLabelStr;
+    if (warnings.length > 0) {
+      level = "Warning";
+      actionType = "Slack: Warning";
+      // Label: list the warning pathways. If notifications also exist,
+      // append a "+N more" hint so HC sees there's secondary content.
+      var warnLabels = warnings.map(pathwayShortLabel);
+      pathwayLabelStr = warnLabels.join(" + ");
+      if (notifications.length > 0) {
+        pathwayLabelStr += " (+" + notifications.length + " heads-up)";
+      }
+    } else {
+      level = "Notification";
+      actionType = "Slack: Notification";
+      var notifLabels = notifications.map(pathwayShortLabel);
+      pathwayLabelStr = notifLabels.join(" + ");
+    }
+
+    return {
+      kind: "coach-slack",
+      client: state.clientName,
+      coach: state.coach,
+      level: level,
+      actionType: actionType,
+      warnings: warnings,
+      notifications: notifications,
+      pathwayLabel: pathwayLabelStr,
+      // Detailed labels for the row's secondary line (with week counts).
+      warningsDetail: warnings.map(pathwayLabelWithWeek),
+      notificationsDetail: notifications.map(pathwayLabelWithWeek)
+    };
+  }
+
+  // ---------- Direct Client Actions (Post-Red) ----------
   function collectDirectClientActions(state, hcActions) {
     var clientActions = (hcActions || []).filter(function (a) {
       return a.client && state.clientName &&
         a.client.toLowerCase().trim() === state.clientName.toLowerCase().trim();
     });
-    // Get the most recent action per pathway/standard combo.
-    // For v1 simplicity: if ANY pathway has colorReason "post-red-tracking",
-    // surface ONE row per such pathway with buttons based on the latest
-    // open action across that pathway/standard.
     var rows = [];
     var ps = state.pathwayStates || {};
 
@@ -151,7 +173,6 @@
         .filter(function (a) {
           if (a.pathway !== pathwayCode) return false;
           if (pathwayCode === "P2" && standard) {
-            // Tolerate short and long form standard names.
             var s = (a.standard || "").toLowerCase();
             var target = standard.toLowerCase();
             var shortMap = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
@@ -170,8 +191,6 @@
 
     function buttonsForLatest(latest) {
       if (!latest) {
-        // Coach call outcome forced HC to take over but HC hasn't acted.
-        // First HC step is sending the email.
         return [
           { label: "Mark HC email sent", actionType: "HC Email: Sent", primary: true }
         ];
@@ -214,15 +233,9 @@
           : "?";
         return "Post-Red, Day " + days + " since HC email";
       }
-      if (latest.actionType === "HC Email: Follow-up") {
-        return "Post-Red, follow-up sent";
-      }
-      if (latest.actionType === "HC Call: Scheduled") {
-        return "HC Call scheduled";
-      }
-      if (latest.actionType === "HC Call: Did Not Resolve") {
-        return "HC Call did not resolve — Black Flag threshold";
-      }
+      if (latest.actionType === "HC Email: Follow-up") return "Post-Red, follow-up sent";
+      if (latest.actionType === "HC Call: Scheduled") return "HC Call scheduled";
+      if (latest.actionType === "HC Call: Did Not Resolve") return "HC Call did not resolve — Black Flag threshold";
       if (latest.actionType && latest.actionType.indexOf("Coach Call Outcome:") === 0) {
         return latest.actionType.replace("Coach Call Outcome: ", "Coach call: ");
       }
@@ -244,12 +257,9 @@
       });
     }
 
-    if (ps.p1 && ps.p1.colorReason === "post-red-tracking") {
-      emitRow("P1", null, "P1");
-    } else if (ps.p1 && ps.p1.colorReason === "red-window-call-asked") {
+    if (ps.p1 && (ps.p1.colorReason === "post-red-tracking" || ps.p1.colorReason === "red-window-call-asked")) {
       emitRow("P1", null, "P1");
     }
-
     (ps.p2 || []).forEach(function (p2) {
       if (p2.colorReason === "post-red-tracking" || p2.colorReason === "red-window-call-asked") {
         var short = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
@@ -257,13 +267,9 @@
         emitRow("P2", p2.standard, "P2 " + s);
       }
     });
-
-    if (ps.p3 && ps.p3.colorReason === "post-red-tracking") {
-      emitRow("P3", null, "P3");
-    } else if (ps.p3 && ps.p3.colorReason === "red-window-call-asked") {
+    if (ps.p3 && (ps.p3.colorReason === "post-red-tracking" || ps.p3.colorReason === "red-window-call-asked")) {
       emitRow("P3", null, "P3");
     }
-
     return rows;
   }
 
@@ -273,16 +279,17 @@
     var now = opts.now || new Date();
     var currentWeek = isoWeekKey(now);
 
-    // 1. Coach actions.
     var coachActions = [];
     var directActions = [];
     for (var i = 0; i < states.length; i++) {
       var s = states[i];
-      coachActions = coachActions.concat(collectCoachActions(s));
+      var ca = buildClientAction(s);
+      if (ca) coachActions.push(ca);
       directActions = directActions.concat(collectDirectClientActions(s, hcActions));
     }
 
-    // 2. Group coach actions by coach, sort within group.
+    // Group coach actions by coach. Within group: Warnings before
+    // Notifications, then alphabetic by client.
     var byCoach = Object.create(null);
     coachActions.forEach(function (a) {
       var k = a.coach || "Unassigned";
@@ -291,16 +298,17 @@
     });
     var coachGroups = Object.keys(byCoach).sort().map(function (coach) {
       var list = byCoach[coach].slice().sort(function (a, b) {
-        var ra = severityRank(a) - severityRank(b);
-        if (ra !== 0) return ra;
+        if (a.level !== b.level) {
+          // Warning before Notification
+          return a.level === "Warning" ? -1 : 1;
+        }
         return a.client.localeCompare(b.client);
       });
       return { coach: coach, actions: list, count: list.length };
     });
 
-    // 3. Direct client actions: severity-then-name.
+    // Direct client actions: severity-then-name.
     directActions.sort(function (a, b) {
-      // Push "Trigger Black Flag" cases to the top.
       function urgency(row) {
         if (row.latestActionType === "HC Call: Did Not Resolve") return 0;
         if (row.latestActionType === "HC Call: Scheduled") return 1;
@@ -312,7 +320,7 @@
       return a.client.localeCompare(b.client);
     });
 
-    // 4. Completed this week: filter HC Actions to current ISO week.
+    // Completed this week.
     var completed = (hcActions || [])
       .filter(function (a) {
         if (!a.timestamp) return false;
@@ -323,12 +331,10 @@
                (a.timestamp ? a.timestamp.getTime() : 0);
       });
 
-    var totalCoachActions = coachActions.length;
-
     return {
       currentWeek: currentWeek,
       coachGroups: coachGroups,
-      totalCoachActions: totalCoachActions,
+      totalCoachActions: coachActions.length,
       totalCoaches: coachGroups.length,
       directActions: directActions,
       completed: completed
@@ -339,9 +345,11 @@
     build: build,
     _internal: {
       isoWeekKey: isoWeekKey,
-      severityRank: severityRank,
-      collectCoachActions: collectCoachActions,
-      collectDirectClientActions: collectDirectClientActions
+      buildClientAction: buildClientAction,
+      collectDirectClientActions: collectDirectClientActions,
+      pathwayShortLabel: pathwayShortLabel,
+      pathwayLabelWithWeek: pathwayLabelWithWeek,
+      flattenActivePathways: flattenActivePathways
     }
   };
 })(typeof window !== "undefined" ? window : this);
