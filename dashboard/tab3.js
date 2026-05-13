@@ -485,6 +485,24 @@
     return renderDrilldownPlaceholder();
   }
 
+  // Render a spinner panel while expensive computation runs. Used when
+  // changing coach or period triggers a recompute of Component 3 (which
+  // re-runs the pathway engine 12 weeks × N clients = several seconds).
+  function renderLoadingPanel(coaches) {
+    var container = document.getElementById("patterns-content");
+    if (!container) return;
+    var html = "";
+    html += renderHeader();
+    html += renderToolbar(coaches);
+    html += '<div class="t3-loading-panel">';
+    html += '<div class="spinner"></div>';
+    html += '<p class="t3-loading-text">Computing diagnostics for ' +
+      esc(viewState.selectedCoach) + '…</p>';
+    html += '<p class="t3-loading-sub">12-week pathway trend takes a few seconds.</p>';
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
   // ---------- Main render ----------
   function renderPanel(states, hcActions, sharedCtx) {
     var container = document.getElementById("patterns-content");
@@ -505,6 +523,39 @@
     }
 
     var CDA = root.CoachDiagnosticsAggregators;
+    var cacheKey = viewState.selectedCoach + "|" + viewState.periodDays;
+    var cacheHit = viewState.chronicityCacheKey === cacheKey && viewState.chronicityCache;
+
+    // Fast path: chronicity is cached, no need for a spinner. Drill-down
+    // toggles and re-renders within the same (coach, period) hit this.
+    if (cacheHit) {
+      renderPanelSync(states, hcActions, sharedCtx, coaches, roster, formResponses, CDA);
+      return;
+    }
+
+    // Slow path: chronicity needs recomputing. Show the spinner first,
+    // then defer the heavy work via setTimeout so the browser has a chance
+    // to paint before JS blocks the main thread for ~3-5s.
+    renderLoadingPanel(coaches);
+    // Re-wire toolbar so user can change selection while computing (this
+    // will just trigger another renderPanel, which will see a new cacheKey
+    // and either short-circuit or repaint the spinner).
+    wireToolbarOnly(states, hcActions, sharedCtx);
+
+    setTimeout(function () {
+      // Bail out if the user moved on (changed coach again while we were
+      // about to compute). The next call will handle the new selection.
+      if (viewState.selectedCoach + "|" + viewState.periodDays !== cacheKey) {
+        return;
+      }
+      renderPanelSync(states, hcActions, sharedCtx, coaches, roster, formResponses, CDA);
+    }, 0);
+  }
+
+  // The actual rendering once chronicity is available (or cheap to fetch).
+  function renderPanelSync(states, hcActions, sharedCtx, coaches, roster, formResponses, CDA) {
+    var container = document.getElementById("patterns-content");
+    if (!container) return;
 
     var distribution = CDA.calculateStandardDistribution(
       formResponses, roster, viewState.selectedCoach, viewState.periodDays
@@ -514,8 +565,6 @@
       formResponses, roster, viewState.selectedCoach, viewState.periodDays
     );
 
-    // Chronicity is expensive — cache per (coach, period) so re-renders
-    // triggered by drill-down state don't recompute it.
     var cacheKey = viewState.selectedCoach + "|" + viewState.periodDays;
     var chronicity;
     if (viewState.chronicityCacheKey === cacheKey && viewState.chronicityCache) {
@@ -552,6 +601,35 @@
   }
 
   // ---------- Wire ----------
+  // Wires only the toolbar (coach + period selectors). Used during the
+  // loading state when the full UI isn't rendered yet but the user might
+  // still want to change selection.
+  function wireToolbarOnly(states, hcActions, sharedCtx) {
+    var rerender = function () { renderPanel(states, hcActions, sharedCtx); };
+
+    document.querySelectorAll(".t3-coach-tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var c = btn.getAttribute("data-coach");
+        if (c && c !== viewState.selectedCoach) {
+          viewState.selectedCoach = c;
+          viewState.drillDown = null;
+          rerender();
+        }
+      });
+    });
+
+    document.querySelectorAll(".t3-period-tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var d = parseInt(btn.getAttribute("data-days"), 10);
+        if (!isNaN(d) && d !== viewState.periodDays) {
+          viewState.periodDays = d;
+          viewState.drillDown = null;
+          rerender();
+        }
+      });
+    });
+  }
+
   function wireInteractions(states, hcActions, sharedCtx) {
     var rerender = function () { renderPanel(states, hcActions, sharedCtx); };
 
