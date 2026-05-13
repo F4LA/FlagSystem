@@ -12,8 +12,16 @@
  * to PathwayDetail.open (shared modal).
  *
  * Public API:
- *   Tab3.render(ctx)
- *     ctx: { states, formResponses, hcActions, roster }
+ *   Tab3.render(states, hcActions, sharedCtx)
+ *     states:     array of ClientState objects from StateBuilder (each has .coach attached)
+ *     hcActions:  array of HC Actions rows
+ *     sharedCtx:  { formResponses, currentWeek, onActionLogged }
+ *
+ * Roster is derived on the fly from `states` (each state already carries
+ * .coach), so we don't need to re-fetch it from the Sheet. This also
+ * means the roster Tab 3 sees is exactly the post-filter roster — clients
+ * of excluded coaches (Bernardo, Joey) are already gone, which is what
+ * we want.
  *
  * The render function is idempotent — re-calling it re-paints the panel
  * from scratch. State that lives across renders (selected coach, selected
@@ -193,12 +201,23 @@
     return html;
   }
 
+  // Derive roster from states. Each state has .coach attached by
+  // StateBuilder.buildAll, so this is always consistent with what the
+  // rest of the dashboard sees.
+  function rosterFromStates(states) {
+    return (states || []).map(function (s) {
+      return { client: s.clientName, coach: s.coach };
+    });
+  }
+
   // ---------- Main panel renderer ----------
-  function renderPanel(ctx) {
+  function renderPanel(states, hcActions, sharedCtx) {
     var container = document.getElementById("patterns-content");
     if (!container) return;
 
-    var coaches = uniqueCoaches(ctx.states);
+    var coaches = uniqueCoaches(states);
+    var roster = rosterFromStates(states);
+    var formResponses = sharedCtx.formResponses || [];
 
     // Default selected coach: first alphabetically.
     if (!viewState.selectedCoach || coaches.indexOf(viewState.selectedCoach) === -1) {
@@ -215,8 +234,8 @@
 
     // Compute Component 1 data
     var distribution = root.CoachDiagnosticsAggregators.calculateStandardDistribution(
-      ctx.formResponses,
-      ctx.roster,
+      formResponses,
+      roster,
       viewState.selectedCoach,
       viewState.periodDays
     );
@@ -243,7 +262,7 @@
     html += '</div>';
 
     container.innerHTML = html;
-    wireInteractions(ctx, distribution);
+    wireInteractions(states, hcActions, sharedCtx, distribution);
   }
 
   function renderDrilldownPlaceholder() {
@@ -257,7 +276,7 @@
   }
 
   // ---------- Wire interactions ----------
-  function wireInteractions(ctx, distribution) {
+  function wireInteractions(states, hcActions, sharedCtx, distribution) {
     // Coach selector
     document.querySelectorAll(".t3-coach-tab").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -265,7 +284,7 @@
         if (c && c !== viewState.selectedCoach) {
           viewState.selectedCoach = c;
           viewState.drillDown = null; // reset drill-down on coach change
-          renderPanel(ctx);
+          renderPanel(states, hcActions, sharedCtx);
         }
       });
     });
@@ -277,7 +296,7 @@
         if (!isNaN(d) && d !== viewState.periodDays) {
           viewState.periodDays = d;
           viewState.drillDown = null; // reset drill-down on period change
-          renderPanel(ctx);
+          renderPanel(states, hcActions, sharedCtx);
         }
       });
     });
@@ -288,7 +307,7 @@
         var std = row.getAttribute("data-standard");
         if (std) {
           viewState.drillDown = { kind: "standard", payload: std };
-          renderPanel(ctx);
+          renderPanel(states, hcActions, sharedCtx);
         }
       };
       row.addEventListener("click", open);
@@ -305,7 +324,7 @@
     if (closeBtn) {
       closeBtn.addEventListener("click", function () {
         viewState.drillDown = null;
-        renderPanel(ctx);
+        renderPanel(states, hcActions, sharedCtx);
       });
     }
 
@@ -315,9 +334,9 @@
         var clientName = row.getAttribute("data-client");
         if (clientName && root.PathwayDetail && root.PathwayDetail.open) {
           root.PathwayDetail.open(clientName, {
-            states: ctx.states,
-            hcActions: ctx.hcActions,
-            formResponses: ctx.formResponses
+            states: states,
+            hcActions: hcActions,
+            formResponses: sharedCtx.formResponses
           });
         }
       };
@@ -332,8 +351,7 @@
   }
 
   // ---------- Public ----------
-  function render(ctx) {
-    if (!ctx) return;
+  function render(states, hcActions, sharedCtx) {
     if (!root.CoachDiagnosticsAggregators) {
       var container = document.getElementById("patterns-content");
       if (container) {
@@ -342,7 +360,7 @@
       }
       return;
     }
-    renderPanel(ctx);
+    renderPanel(states || [], hcActions || [], sharedCtx || {});
   }
 
   root.Tab3 = {
