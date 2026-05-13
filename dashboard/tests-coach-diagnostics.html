@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Coach Diagnostics Aggregators Tests (Tab 3)</title>
+<style>
+  body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; max-width: 980px; margin: auto; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { color: #666; margin-bottom: 16px; font-size: 12px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #444; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 24px; }
+  .summary { padding: 12px; border-radius: 6px; margin: 16px 0; font-weight: 600; }
+  .summary.ok { background: #e6f7ec; color: #0a6b2c; border: 1px solid #b6e2c5; }
+  .summary.bad { background: #fde8e8; color: #8a1f1f; border: 1px solid #f1c0c0; }
+  .test { padding: 6px 10px; border-radius: 4px; margin: 4px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .pass { background: #f0f9f3; color: #0a6b2c; }
+  .fail { background: #fdecec; color: #8a1f1f; }
+  .fail pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 11.5px; color: #5a1414; }
+</style>
+</head>
+<body>
+<h1>Coach Diagnostics Aggregators Tests — Tab 3</h1>
+<div class="meta">Standard Distribution + Rotation Index + Pathway Chronicity</div>
+<div id="summary" class="summary">Running…</div>
+<div id="results"></div>
+
+<!-- Engine modules in dependency order -->
+<script src="./coaching-week.js"></script>
+<script src="./client-timeline.js"></script>
+<script src="./consecutive-evaluable.js"></script>
+<script src="./pathway-evaluators.js"></script>
+<script src="./color-deriver.js"></script>
+<script src="./pathway-engine.js"></script>
+
+<!-- Aggregators (module under test) -->
+<script src="./coach-diagnostics-aggregators.js"></script>
+
+<script>
+(function () {
+  "use strict";
+
+  var results = document.getElementById("results");
+  var summary = document.getElementById("summary");
+  var passed = 0;
+  var failed = 0;
+
+  function group(name) {
+    var h = document.createElement("h2");
+    h.textContent = name;
+    results.appendChild(h);
+  }
+
+  function test(name, fn) {
+    var div = document.createElement("div");
+    div.className = "test";
+    try {
+      fn();
+      passed++;
+      div.classList.add("pass");
+      div.textContent = "PASS  " + name;
+    } catch (e) {
+      failed++;
+      div.classList.add("fail");
+      var pre = document.createElement("pre");
+      pre.textContent = (e && e.message) || String(e);
+      div.textContent = "FAIL  " + name;
+      div.appendChild(pre);
+    }
+    results.appendChild(div);
+  }
+
+  function assertEq(actual, expected, msg) {
+    if (actual !== expected) {
+      throw new Error(
+        (msg || "Expected") + ": got " + JSON.stringify(actual) +
+        ", expected " + JSON.stringify(expected)
+      );
+    }
+  }
+
+  function assertTrue(cond, msg) {
+    if (!cond) throw new Error(msg || "Expected true");
+  }
+
+  function assertDeepEq(actual, expected, msg) {
+    var a = JSON.stringify(actual);
+    var e = JSON.stringify(expected);
+    if (a !== e) {
+      throw new Error((msg || "Deep equal failed") + ":\n  got      " + a + "\n  expected " + e);
+    }
+  }
+
+  // ---------- Sanity check: module loaded ----------
+  if (!window.CoachDiagnosticsAggregators) {
+    summary.className = "summary bad";
+    summary.textContent = "FAILED TO LOAD: window.CoachDiagnosticsAggregators is undefined. " +
+      "Check that coach-diagnostics-aggregators.js is included before this script.";
+    return;
+  }
+
+  var CDA = window.CoachDiagnosticsAggregators;
+
+  // ---------- Test data builders ----------
+  //
+  // Build form rows in the ARRAY shape used by sheets-reader.js, which
+  // matches ClientTimeline.normalizeSubmission's array branch:
+  //   [timestamp, client, exempt, justification, standards, loom, callReq, notes]
+  function row(timestamp, client, opts) {
+    opts = opts || {};
+    var standards = opts.completed || [];
+    return [
+      timestamp,
+      client,
+      opts.exempt ? "Yes" : "No",
+      opts.justification || "",
+      standards.join(", "),
+      opts.loom || "",
+      opts.callRequested || "",
+      opts.notes || ""
+    ];
+  }
+
+  // A "clean" submission completes all 5 standards = 0 failures.
+  var ALL_STANDARDS = [
+    "Check-In Submission",
+    "Training Adherence",
+    "Nutrition Adherence",
+    "Movement Target",
+    "Technique Feedback"
+  ];
+
+  // Reference dates used across tests. currentDate is May 13, 2026.
+  var NOW = new Date("2026-05-13T12:00:00Z");
+  var DAYS_AGO = function (n) {
+    var d = new Date(NOW.getTime());
+    d.setUTCDate(d.getUTCDate() - n);
+    return d;
+  };
+
+  // =========================================================================
+  // calculateStandardDistribution
+  // =========================================================================
+  group("calculateStandardDistribution — empty & basic");
+
+  test("empty inputs return totalFlags 0 and all standards at count 0", function () {
+    var r = CDA.calculateStandardDistribution([], [], "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 0);
+    assertEq(r.byStandard.length, 5, "should return all 5 standards even with no data");
+    r.byStandard.forEach(function (s) {
+      assertEq(s.count, 0, s.standard + " count");
+      assertEq(s.percentage, 0, s.standard + " percentage");
+    });
+  });
+
+  test("one submission with 2 failures counts 2 flags total", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    // Completes 3 of 5 -> fails Nutrition Adherence and Movement Target
+    var forms = [row(DAYS_AGO(3), "Maria", {
+      completed: ["Check-In Submission", "Training Adherence", "Technique Feedback"]
+    })];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 2);
+    // Find the two failed standards
+    var nutr = r.byStandard.find(function (s) { return s.standard === "Nutrition Adherence"; });
+    var mvmt = r.byStandard.find(function (s) { return s.standard === "Movement Target"; });
+    assertEq(nutr.count, 1);
+    assertEq(mvmt.count, 1);
+    assertEq(nutr.percentage, 50);
+    assertEq(mvmt.percentage, 50);
+  });
+
+  test("instance counting: client failing same standard 3 weeks = 3 flags on that standard", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    var forms = [
+      row(DAYS_AGO(7),  "Maria", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }), // fails Nutrition
+      row(DAYS_AGO(14), "Maria", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }), // fails Nutrition
+      row(DAYS_AGO(21), "Maria", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] })  // fails Nutrition
+    ];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 3);
+    var nutr = r.byStandard.find(function (s) { return s.standard === "Nutrition Adherence"; });
+    assertEq(nutr.count, 3);
+    assertEq(nutr.percentage, 100);
+    // Clients sub-list for Nutrition should have Maria with count 3
+    assertEq(nutr.clients.length, 1);
+    assertEq(nutr.clients[0].clientName, "Maria");
+    assertEq(nutr.clients[0].count, 3);
+  });
+
+  group("calculateStandardDistribution — sorting");
+
+  test("byStandard array is sorted by count descending", function () {
+    var roster = [{ client: "A", coach: "Brent" }];
+    var forms = [
+      // 3 weeks fail Nutrition
+      row(DAYS_AGO(7),  "A", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      row(DAYS_AGO(14), "A", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      row(DAYS_AGO(21), "A", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      // 1 week fails Training
+      row(DAYS_AGO(28), "A", { completed: ["Check-In Submission","Nutrition Adherence","Movement Target","Technique Feedback"] })
+    ];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.byStandard[0].standard, "Nutrition Adherence", "Nutrition should be first (3 fails)");
+    assertEq(r.byStandard[0].count, 3);
+    assertEq(r.byStandard[1].standard, "Training Adherence", "Training should be second (1 fail)");
+    assertEq(r.byStandard[1].count, 1);
+  });
+
+  group("calculateStandardDistribution — filtering");
+
+  test("submissions older than daysBack are excluded", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    var forms = [
+      row(DAYS_AGO(200), "Maria", { completed: [] }) // 200 days ago, fails all 5
+    ];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 0, "200-day-old submission should be filtered out at daysBack=90");
+  });
+
+  test("submissions from other coaches' clients are excluded", function () {
+    var roster = [
+      { client: "Maria", coach: "Brent" },
+      { client: "John",  coach: "Ceci"  }
+    ];
+    var forms = [
+      row(DAYS_AGO(3), "John", { completed: [] }) // John fails all 5, but he's Ceci's client
+    ];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 0, "John's failures shouldn't count for Brent");
+  });
+
+  test("exempt submissions don't count as failures", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    var forms = [
+      row(DAYS_AGO(3), "Maria", { exempt: true, justification: "On vacation" })
+    ];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 0, "exempt week is not a failure");
+  });
+
+  test("clean submission (all 5 standards completed) produces 0 flags", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    var forms = [row(DAYS_AGO(3), "Maria", { completed: ALL_STANDARDS })];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 0);
+  });
+
+  group("calculateStandardDistribution — clients drill-down");
+
+  test("multiple clients contribute to same standard, drill-down lists all of them sorted", function () {
+    var roster = [
+      { client: "Maria", coach: "Brent" },
+      { client: "John",  coach: "Brent" },
+      { client: "Lisa",  coach: "Brent" }
+    ];
+    var forms = [
+      // Maria fails Nutrition 3 weeks
+      row(DAYS_AGO(7),  "Maria", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      row(DAYS_AGO(14), "Maria", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      row(DAYS_AGO(21), "Maria", { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      // John fails Nutrition 1 week
+      row(DAYS_AGO(7),  "John",  { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      // Lisa fails Nutrition 2 weeks
+      row(DAYS_AGO(7),  "Lisa",  { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] }),
+      row(DAYS_AGO(14), "Lisa",  { completed: ["Check-In Submission","Training Adherence","Movement Target","Technique Feedback"] })
+    ];
+    var r = CDA.calculateStandardDistribution(forms, roster, "Brent", 90, { currentDate: NOW });
+    var nutr = r.byStandard.find(function (s) { return s.standard === "Nutrition Adherence"; });
+    assertEq(nutr.count, 6, "3 Maria + 1 John + 2 Lisa = 6 instances");
+    assertEq(nutr.clients.length, 3, "3 unique clients contributed");
+    // Sorted by count desc: Maria (3), Lisa (2), John (1)
+    assertEq(nutr.clients[0].clientName, "Maria");
+    assertEq(nutr.clients[0].count, 3);
+    assertEq(nutr.clients[1].clientName, "Lisa");
+    assertEq(nutr.clients[1].count, 2);
+    assertEq(nutr.clients[2].clientName, "John");
+    assertEq(nutr.clients[2].count, 1);
+  });
+
+  // =========================================================================
+  // calculateRotationIndex
+  // =========================================================================
+  group("calculateRotationIndex — empty & basic");
+
+  test("empty inputs return safe defaults", function () {
+    var r = CDA.calculateRotationIndex([], [], "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 0);
+    assertEq(r.uniqueClients, 0);
+    assertEq(r.topContributors.length, 0);
+    assertEq(r.concentrationScore, 0);
+    assertEq(r.concentrationLevel, "low");
+  });
+
+  test("single client with 1 failure produces 100% concentration", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    var forms = [row(DAYS_AGO(3), "Maria", {
+      completed: ["Check-In Submission","Training Adherence","Nutrition Adherence","Movement Target"]
+    })]; // fails 1 standard
+    var r = CDA.calculateRotationIndex(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 1);
+    assertEq(r.uniqueClients, 1);
+    assertEq(r.concentrationScore, 100);
+    assertEq(r.concentrationLevel, "high");
+    assertEq(r.topContributors[0].clientName, "Maria");
+    assertEq(r.topContributors[0].flagCount, 1);
+  });
+
+  group("calculateRotationIndex — concentration thresholds");
+
+  test("high concentration: top 3 contribute > 60% of flags", function () {
+    // 4 clients. Top 3 contribute 9 of 10 flags = 90% (high).
+    var roster = [
+      { client: "A", coach: "Brent" },
+      { client: "B", coach: "Brent" },
+      { client: "C", coach: "Brent" },
+      { client: "D", coach: "Brent" }
+    ];
+    // A fails 5 standards (1 week, all 5)
+    // B fails 5 standards
+    // C fails 5 standards
+    // ...wait we want 9 of 10 specifically. Use varied counts.
+    // A: 4 flags, B: 3 flags, C: 2 flags, D: 1 flag. Top 3 = 9. Total = 10.
+    var forms = [
+      // A: 4 fails in one week (completes only Check-In)
+      row(DAYS_AGO(7), "A", { completed: ["Check-In Submission"] }),
+      // B: 3 fails (completes Check-In + Training)
+      row(DAYS_AGO(7), "B", { completed: ["Check-In Submission","Training Adherence"] }),
+      // C: 2 fails
+      row(DAYS_AGO(7), "C", { completed: ["Check-In Submission","Training Adherence","Nutrition Adherence"] }),
+      // D: 1 fail
+      row(DAYS_AGO(7), "D", { completed: ["Check-In Submission","Training Adherence","Nutrition Adherence","Movement Target"] })
+    ];
+    var r = CDA.calculateRotationIndex(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 10, "4+3+2+1");
+    assertEq(r.uniqueClients, 4);
+    // Top 3 = A(4) + B(3) + C(2) = 9 of 10 = 90%
+    assertEq(r.concentrationScore, 90);
+    assertEq(r.concentrationLevel, "high");
+    assertEq(r.topContributors.length, 3);
+    assertEq(r.topContributors[0].clientName, "A");
+  });
+
+  test("medium concentration: top 3 between 30% and 60%", function () {
+    // 10 clients all with 1 flag each. Top 3 = 3 of 10 = 30%.
+    var roster = [];
+    var forms = [];
+    "ABCDEFGHIJ".split("").forEach(function (letter) {
+      roster.push({ client: letter, coach: "Brent" });
+      forms.push(row(DAYS_AGO(7), letter, {
+        completed: ["Check-In Submission","Training Adherence","Nutrition Adherence","Movement Target"]
+      }));
+    });
+    var r = CDA.calculateRotationIndex(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 10);
+    assertEq(r.uniqueClients, 10);
+    assertEq(r.concentrationScore, 30);
+    assertEq(r.concentrationLevel, "medium");
+  });
+
+  test("low concentration: top 3 < 30%", function () {
+    // 15 clients all with 1 flag each. Top 3 = 3 of 15 = 20%.
+    var letters = "ABCDEFGHIJKLMNO".split("");
+    var roster = letters.map(function (l) { return { client: l, coach: "Brent" }; });
+    var forms = letters.map(function (l) {
+      return row(DAYS_AGO(7), l, {
+        completed: ["Check-In Submission","Training Adherence","Nutrition Adherence","Movement Target"]
+      });
+    });
+    var r = CDA.calculateRotationIndex(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.totalFlags, 15);
+    assertEq(r.concentrationScore, 20);
+    assertEq(r.concentrationLevel, "low");
+  });
+
+  test("fewer than 3 clients: top contributors returns what exists", function () {
+    var roster = [
+      { client: "A", coach: "Brent" },
+      { client: "B", coach: "Brent" }
+    ];
+    var forms = [
+      row(DAYS_AGO(7), "A", { completed: ["Check-In Submission"] }), // 4 fails
+      row(DAYS_AGO(7), "B", { completed: ["Check-In Submission"] })  // 4 fails
+    ];
+    var r = CDA.calculateRotationIndex(forms, roster, "Brent", 90, { currentDate: NOW });
+    assertEq(r.uniqueClients, 2);
+    assertEq(r.topContributors.length, 2, "should not pad to 3");
+    assertEq(r.concentrationScore, 100, "with only 2 clients, top 3 = 100%");
+  });
+
+  // =========================================================================
+  // calculatePathwayChronicity
+  // =========================================================================
+  group("calculatePathwayChronicity — current state from states");
+
+  test("currentState reflects active pathways from states input", function () {
+    var states = [
+      {
+        clientName: "Maria",
+        coach: "Brent",
+        pathwayStates: {
+          p1: { active: true, pathway: "P1" },
+          p2: [{ active: true, pathway: "P2", standard: "Nutrition Adherence" }],
+          p3: { active: false }
+        }
+      },
+      {
+        clientName: "John",
+        coach: "Brent",
+        pathwayStates: {
+          p1: { active: false },
+          p2: [],
+          p3: { active: true, pathway: "P3" }
+        }
+      }
+    ];
+    var roster = [
+      { client: "Maria", coach: "Brent" },
+      { client: "John",  coach: "Brent" }
+    ];
+    var r = CDA.calculatePathwayChronicity(states, [], [], roster, "Brent", {
+      weeksBack: 0,  // skip trend for this test
+      currentDate: NOW
+    });
+    assertEq(r.currentState.P1, 1, "Maria in P1");
+    assertEq(r.currentState.P2.total, 1, "Maria in P2 Nutrition");
+    assertEq(r.currentState.P3, 1, "John in P3");
+    assertEq(r.currentState.clientsByPathway.P1[0], "Maria");
+    assertEq(r.currentState.clientsByPathway.P3[0], "John");
+  });
+
+  test("currentState filters out other coaches' clients", function () {
+    var states = [
+      {
+        clientName: "Maria",
+        coach: "Ceci",  // different coach
+        pathwayStates: { p1: { active: true }, p2: [], p3: { active: false } }
+      }
+    ];
+    var roster = [{ client: "Maria", coach: "Ceci" }];
+    var r = CDA.calculatePathwayChronicity(states, [], [], roster, "Brent", {
+      weeksBack: 0,
+      currentDate: NOW
+    });
+    assertEq(r.currentState.P1, 0, "Maria is Ceci's client, not Brent's");
+  });
+
+  test("currentState aggregates P2 by standard", function () {
+    var states = [
+      {
+        clientName: "A", coach: "Brent",
+        pathwayStates: {
+          p1: { active: false },
+          p2: [{ active: true, pathway: "P2", standard: "Nutrition Adherence" }],
+          p3: { active: false }
+        }
+      },
+      {
+        clientName: "B", coach: "Brent",
+        pathwayStates: {
+          p1: { active: false },
+          p2: [{ active: true, pathway: "P2", standard: "Nutrition Adherence" }],
+          p3: { active: false }
+        }
+      },
+      {
+        clientName: "C", coach: "Brent",
+        pathwayStates: {
+          p1: { active: false },
+          p2: [{ active: true, pathway: "P2", standard: "Movement Target" }],
+          p3: { active: false }
+        }
+      }
+    ];
+    var roster = [
+      { client: "A", coach: "Brent" },
+      { client: "B", coach: "Brent" },
+      { client: "C", coach: "Brent" }
+    ];
+    var r = CDA.calculatePathwayChronicity(states, [], [], roster, "Brent", {
+      weeksBack: 0,
+      currentDate: NOW
+    });
+    assertEq(r.currentState.P2.total, 3);
+    // P2.byStandard should have 2 entries (Nutrition with 2, Movement with 1)
+    assertEq(r.currentState.P2.byStandard.length, 2);
+    assertEq(r.currentState.P2.byStandard[0].standard, "Nutrition Adherence", "Nutrition first (count 2)");
+    assertEq(r.currentState.P2.byStandard[0].count, 2);
+    assertEq(r.currentState.P2.byStandard[1].standard, "Movement Target");
+    assertEq(r.currentState.P2.byStandard[1].count, 1);
+  });
+
+  group("calculatePathwayChronicity — trend window");
+
+  test("weeksAvailable matches weeksBack", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    var r = CDA.calculatePathwayChronicity([], [], [], roster, "Brent", {
+      weeksBack: 12,
+      currentDate: NOW
+    });
+    assertEq(r.weeksAvailable, 12);
+    assertEq(r.trend.weeklyActiveByPathway.length, 12);
+  });
+
+  test("trend points include weekOf, P1, P2, P3 fields", function () {
+    var roster = [{ client: "Maria", coach: "Brent" }];
+    var r = CDA.calculatePathwayChronicity([], [], [], roster, "Brent", {
+      weeksBack: 4,
+      currentDate: NOW
+    });
+    r.trend.weeklyActiveByPathway.forEach(function (p) {
+      assertTrue(typeof p.weekOf === "string", "weekOf is string");
+      assertTrue(p.weekOf.match(/^\d{4}-\d{2}-\d{2}$/), "weekOf is YYYY-MM-DD: " + p.weekOf);
+      assertEq(typeof p.P1, "number", "P1 count is number");
+      assertEq(typeof p.P2, "number", "P2 count is number");
+      assertEq(typeof p.P3, "number", "P3 count is number");
+    });
+  });
+
+  test("trend with no clients returns zero counts", function () {
+    var roster = []; // No clients for this coach
+    var r = CDA.calculatePathwayChronicity([], [], [], roster, "Brent", {
+      weeksBack: 4,
+      currentDate: NOW
+    });
+    r.trend.weeklyActiveByPathway.forEach(function (p) {
+      assertEq(p.P1, 0);
+      assertEq(p.P2, 0);
+      assertEq(p.P3, 0);
+    });
+    assertEq(r.trend.avgDuration.P1, 0);
+    assertEq(r.trend.avgDuration.P2, 0);
+    assertEq(r.trend.avgDuration.P3, 0);
+  });
+
+  // =========================================================================
+  // _internal helpers
+  // =========================================================================
+  group("_internal helpers");
+
+  test("clientsForCoach is case-insensitive and trim-tolerant", function () {
+    var roster = [
+      { client: "Maria", coach: "Brent" },
+      { client: "John",  coach: "  brent  " }, // padded/lowercase
+      { client: "Lisa",  coach: "Ceci" }
+    ];
+    var set = CDA._internal.clientsForCoach(roster, "BRENT");
+    assertEq(set.size, 2);
+    assertTrue(set.has("maria"));
+    assertTrue(set.has("john"));
+  });
+
+  test("failedStandardsForSubmission returns all 5 when none completed", function () {
+    var sub = { exempt: false, standardsCompleted: [] };
+    var failed = CDA._internal.failedStandardsForSubmission(sub);
+    assertEq(failed.length, 5);
+  });
+
+  test("failedStandardsForSubmission returns empty for exempt", function () {
+    var sub = { exempt: true, standardsCompleted: [] };
+    var failed = CDA._internal.failedStandardsForSubmission(sub);
+    assertEq(failed.length, 0);
+  });
+
+  test("failedStandardsForSubmission returns empty when all completed", function () {
+    var sub = { exempt: false, standardsCompleted: ALL_STANDARDS };
+    var failed = CDA._internal.failedStandardsForSubmission(sub);
+    assertEq(failed.length, 0);
+  });
+
+  test("average computes mean and rounds to 1 decimal", function () {
+    assertEq(CDA._internal.average([1, 2, 3]), 2);
+    assertEq(CDA._internal.average([1, 2]), 1.5);
+    assertEq(CDA._internal.average([]), 0);
+    assertEq(CDA._internal.average([1, 2, 2]), 1.7); // 1.666... -> 1.7
+  });
+
+  // =========================================================================
+  // Summary
+  // =========================================================================
+  var total = passed + failed;
+  if (failed === 0) {
+    summary.className = "summary ok";
+    summary.textContent = "All " + total + " tests passed.";
+  } else {
+    summary.className = "summary bad";
+    summary.textContent = passed + " passed, " + failed + " failed (of " + total + " total).";
+  }
+})();
+</script>
+</body>
+</html>
