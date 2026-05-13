@@ -1,34 +1,33 @@
 /**
- * Flag System Dashboard — Tab 3 (Coach Patterns)
+ * Flag System Dashboard — Tab 3: Coach Diagnostics
  *
- * Per-coach view with the 4 scorecard metrics calculable from the Flag
- * System's 3 data sources (Roster, Form Responses, HC Actions). Other
- * Coach Pulse metrics (Renewals, Community Post, Client Win Shoutout,
- * Renewals Next 2 Weeks) live in the future Coach Pulse Dashboard.
+ * Private HC view answering three diagnostic questions per coach:
+ *   1. Which standards do their clients fail most? (Component 1)
+ *   2. Are flags concentrated in a few clients or distributed? (Component 2 — NEXT BLOCK)
+ *   3. How long are clients staying in each pathway, and how is it trending?
+ *      (Component 3 — NEXT BLOCK)
+ *
+ * This file is the renderer. All math lives in
+ * CoachDiagnosticsAggregators. Drill-down to a single client delegates
+ * to PathwayDetail.open (shared modal).
  *
  * Public API:
- *   Tab3.render(states, hcActions, ctx)
- *     ctx: { formResponses, currentWeek, onActionLogged }
+ *   Tab3.render(ctx)
+ *     ctx: { states, formResponses, hcActions, roster }
  *
- * Thresholds (Coaching OS v1.0, May 2026 — to review at 90 days):
- *   1. % New Red Flags        Green ≤6 / Yellow 7–10 / Red >10
- *   2. % Yellow/Red Cumulative Green ≤15 / Yellow 16–20 / Red >20
- *   3. % Black-Flagged         Informational (no color)
- *   4. Form Submission Rate    Green 100 / Red <100  (binary; no Yellow)
- *
- * Sections per coach:
- *   Metrics grid · Clients in Active Pathways · Clients with Black Flag ·
- *   Missing Forms This Week · HC Notes (Coach Audit Notes)
+ * The render function is idempotent — re-calling it re-paints the panel
+ * from scratch. State that lives across renders (selected coach, selected
+ * period, compare mode) is kept in module-scope `viewState`.
  */
 (function (root) {
   "use strict";
 
-  // ---------- Thresholds (Coaching OS v1.0) ----------
-  // TODO: review at 90 days with real data per Coaching OS doc.
-  var THRESHOLDS = {
-    newRed:        { greenMax: 6,  yellowMax: 10 },  // %, > yellowMax => Red
-    yellowRedCum:  { greenMax: 15, yellowMax: 20 },  // %, > yellowMax => Red
-    formSubmit:    { greenMin: 100 }                 // %, binary: <100 => Red
+  // ---------- Module state (survives across renders) ----------
+  var viewState = {
+    selectedCoach: null,   // populated on first render
+    periodDays: 90,        // 30 | 90 | 180
+    compareMode: false,    // toggle for Bloque 3
+    drillDown: null        // { kind: "standard"|"client", payload }
   };
 
   // ---------- HTML escape ----------
@@ -42,499 +41,311 @@
       .replace(/'/g, "&#39;");
   }
 
-  // ---------- Coach bucketing ----------
-  function bucketByCoach(states) {
-    var map = {};
-    states.forEach(function (s) {
-      var coach = s.coach || "Unassigned";
-      if (!map[coach]) map[coach] = [];
-      map[coach].push(s);
+  // ---------- Helpers ----------
+  function uniqueCoaches(states) {
+    var set = new Set();
+    (states || []).forEach(function (s) {
+      if (s && s.coach) set.add(s.coach);
     });
-    var coaches = Object.keys(map).sort();
-    return coaches.map(function (c) {
-      return { coach: c, clients: map[c] };
+    return Array.from(set).sort();
+  }
+
+  function shortStandard(name) {
+    var map = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
+    return map[name] || name;
+  }
+
+  // ---------- Toolbar (coach selector + period selector) ----------
+  function renderToolbar(coaches) {
+    var html = "";
+    html += '<div class="t3-toolbar">';
+
+    // Coach selector
+    html += '<div class="t3-toolbar-group">';
+    html += '<label class="t3-toolbar-label">COACH</label>';
+    html += '<div class="t3-coach-tabs">';
+    coaches.forEach(function (c) {
+      var active = c === viewState.selectedCoach ? " is-active" : "";
+      html += '<button type="button" class="t3-coach-tab' + active +
+        '" data-coach="' + esc(c) + '">' + esc(c) + '</button>';
     });
-  }
+    html += '</div>';
+    html += '</div>';
 
-  // ---------- Metric calculators ----------
-  // % New Red Flags: clients that crossed to Red this week.
-  // Approximation in v1: clients currently in Red color whose last evaluable
-  // week matches the currently evaluated week. This is a runtime proxy until
-  // weekly snapshots are persisted (Coach Pulse Dashboard future work).
-  function calcNewRed(clients) {
-    var total = clients.length;
-    if (total === 0) return { numerator: 0, denominator: 0, pct: 0 };
-    var num = clients.filter(function (s) {
-      return s.color === "Red";
-    }).length;
-    return {
-      numerator: num,
-      denominator: total,
-      pct: total > 0 ? (num / total) * 100 : 0
-    };
-  }
-
-  function calcYellowRedCumulative(clients) {
-    var total = clients.length;
-    if (total === 0) return { numerator: 0, denominator: 0, pct: 0 };
-    var num = clients.filter(function (s) {
-      return s.color === "Yellow" || s.color === "Red";
-    }).length;
-    return {
-      numerator: num,
-      denominator: total,
-      pct: total > 0 ? (num / total) * 100 : 0
-    };
-  }
-
-  function calcBlackFlagged(clients) {
-    var total = clients.length;
-    if (total === 0) return { numerator: 0, denominator: 0, pct: 0 };
-    var num = clients.filter(function (s) {
-      return s.blackFlags && s.blackFlags.active;
-    }).length;
-    return {
-      numerator: num,
-      denominator: total,
-      pct: total > 0 ? (num / total) * 100 : 0
-    };
-  }
-
-  // Form Submission Rate: # clients whose most-recent closed week has a
-  // submission (evaluable OR exempt — both count per TDD §7.4) over total
-  // active clients for this coach.
-  function calcFormSubmission(clients) {
-    var total = clients.length;
-    if (total === 0) return { numerator: 0, denominator: 0, pct: 0 };
-    var num = clients.filter(function (s) {
-      // A client counts as "submitted this week" if state.evaluatedAtWeek
-      // equals state.lastEvaluableWeek.weekId, OR if (we don't have direct
-      // access here to whether last week was exempt) — best approximation
-      // from the state object: lastEvaluableWeek exists and matches evaluatedAtWeek.
-      // This treats Exempt as "missing" in v1 because the state object doesn't
-      // expose week-level exempt status separately. For exact exempt detection
-      // see Pathway Detail. This is a known approximation; the metric still
-      // tracks coach submission behavior at >95% accuracy on typical data.
-      if (!s.evaluatedAtWeek || !s.lastEvaluableWeek) return false;
-      return s.lastEvaluableWeek.weekId === s.evaluatedAtWeek;
-    }).length;
-    return {
-      numerator: num,
-      denominator: total,
-      pct: total > 0 ? (num / total) * 100 : 0
-    };
-  }
-
-  // ---------- Threshold color ----------
-  function colorForNewRed(pct) {
-    if (pct <= THRESHOLDS.newRed.greenMax) return "Green";
-    if (pct <= THRESHOLDS.newRed.yellowMax) return "Yellow";
-    return "Red";
-  }
-  function colorForYellowRedCum(pct) {
-    if (pct <= THRESHOLDS.yellowRedCum.greenMax) return "Green";
-    if (pct <= THRESHOLDS.yellowRedCum.yellowMax) return "Yellow";
-    return "Red";
-  }
-  function colorForFormSubmit(pct) {
-    if (pct >= THRESHOLDS.formSubmit.greenMin) return "Green";
-    return "Red";
-  }
-  function colorClass(color) {
-    if (color === "Red") return "metric-red";
-    if (color === "Yellow") return "metric-yellow";
-    if (color === "Green") return "metric-green";
-    return "metric-neutral";
-  }
-
-  // ---------- HC Actions for coach ----------
-  function coachAuditNotes(coach, hcActions) {
-    if (!coach || !hcActions) return [];
-    return hcActions
-      .filter(function (a) {
-        return a.actionType === "Coach Audit Note" &&
-               String(a.coach || "").toLowerCase().trim() === String(coach).toLowerCase().trim();
-      })
-      .sort(function (a, b) {
-        var ta = a.timestamp ? a.timestamp.getTime() : 0;
-        var tb = b.timestamp ? b.timestamp.getTime() : 0;
-        return tb - ta;
-      });
-  }
-
-  // ---------- Sub-lists ----------
-  function clientsInActivePathways(clients) {
-    return clients.filter(function (s) {
-      return s.color === "Yellow" || s.color === "Red";
-    }).sort(function (a, b) {
-      // Red first, then Yellow, then alphabetic
-      var ra = a.color === "Red" ? 0 : 1;
-      var rb = b.color === "Red" ? 0 : 1;
-      if (ra !== rb) return ra - rb;
-      return (a.clientName || "").localeCompare(b.clientName || "");
+    // Period selector
+    html += '<div class="t3-toolbar-group">';
+    html += '<label class="t3-toolbar-label">PERIOD</label>';
+    html += '<div class="t3-period-tabs">';
+    [30, 90, 180].forEach(function (d) {
+      var active = d === viewState.periodDays ? " is-active" : "";
+      html += '<button type="button" class="t3-period-tab' + active +
+        '" data-days="' + d + '">' + d + 'd</button>';
     });
-  }
+    html += '</div>';
+    html += '</div>';
 
-  function clientsWithBlackFlag(clients) {
-    return clients.filter(function (s) {
-      return s.blackFlags && s.blackFlags.active;
-    }).sort(function (a, b) {
-      return (a.clientName || "").localeCompare(b.clientName || "");
-    });
-  }
-
-  function clientsMissingThisWeek(clients) {
-    return clients.filter(function (s) {
-      if (!s.evaluatedAtWeek) return true;
-      if (!s.lastEvaluableWeek) return true;
-      return s.lastEvaluableWeek.weekId !== s.evaluatedAtWeek;
-    }).sort(function (a, b) {
-      return (a.clientName || "").localeCompare(b.clientName || "");
-    });
-  }
-
-  // ---------- Active pathway label per client ----------
-  function pathwaySummary(state) {
-    var parts = [];
-    var ps = state.pathwayStates || {};
-    if (ps.p1 && ps.p1.active) parts.push("P1 W" + (ps.p1.streakLength || 0));
-    (ps.p2 || []).forEach(function (p) {
-      if (p && p.active) {
-        var short = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
-        var s = short[p.standard] || p.standard || "";
-        parts.push("P2 " + s + " W" + (p.streakLength || 0));
-      }
-    });
-    if (ps.p3 && ps.p3.active) parts.push("P3 W" + (ps.p3.streakLength || 0));
-    return parts.join(" · ");
-  }
-
-  // ---------- Render: metric card ----------
-  function renderMetric(label, value, color, infoOnly, helper) {
-    var cls = infoOnly ? "metric-neutral" : colorClass(color);
-    var html = '<div class="cp-metric ' + cls + '">';
-    html += '<div class="cp-metric-label">' + esc(label) + '</div>';
-    html += '<div class="cp-metric-value">' + esc(value) + '</div>';
-    if (helper) {
-      html += '<div class="cp-metric-helper">' + esc(helper) + '</div>';
-    }
-    if (infoOnly) {
-      html += '<div class="cp-metric-info">Informational</div>';
-    }
     html += '</div>';
     return html;
   }
 
-  function fmtPct(num, den, pct) {
-    return Math.round(pct) + "% (" + num + "/" + den + ")";
-  }
-
-  // ---------- Render: sub-list ----------
-  function renderClientList(clients, opts) {
-    opts = opts || {};
-    if (clients.length === 0) {
-      return '<div class="cp-empty">' + esc(opts.emptyText || "None") + '</div>';
-    }
-    var html = '<div class="cp-client-list">';
-    clients.forEach(function (s) {
-      var detail = opts.detail ? opts.detail(s) : "";
-      var colorBadge = '<span class="rt-color-badge rt-color-' + (s.color || "").toLowerCase() + '">' + esc(s.color) + '</span>';
-      html += '<button type="button" class="cp-client-row" data-client="' + esc(s.clientName) + '">';
-      html += '<span class="cp-client-name">' + esc(s.clientName) + '</span>';
-      if (detail) {
-        html += '<span class="cp-client-detail">' + esc(detail) + '</span>';
-      }
-      html += '<span class="cp-client-color">' + colorBadge + '</span>';
-      html += '</button>';
-    });
+  // ---------- Header (page title) ----------
+  function renderHeader() {
+    var html = "";
+    html += '<div class="t3-header">';
+    html += '<h1 class="t3-title">COACH DIAGNOSTICS</h1>';
+    html += '<p class="t3-subtitle">Private view for HC. Answers WHY a coach\'s metrics are what they are.</p>';
     html += '</div>';
     return html;
   }
 
-  // ---------- Render: HC notes ----------
-  function renderHCNotes(coach, notes) {
-    var html = '<div class="cp-notes-section">';
-    html += '<header class="cp-section-header">';
-    html += '<h4 class="cp-section-title">HC Notes (' + notes.length + ')</h4>';
-    html += '<button type="button" class="action-btn cp-add-note-btn" data-coach="' + esc(coach) + '">+ Add note</button>';
+  // ---------- Component 1: Standard Failure Distribution ----------
+  function renderComponent1(distribution) {
+    var html = "";
+    html += '<section class="t3-card">';
+    html += '<header class="t3-card-header">';
+    html += '<h2 class="t3-card-title">STANDARD FAILURE DISTRIBUTION</h2>';
+    html += '<span class="t3-card-meta">' + distribution.totalFlags +
+      ' total flag' + (distribution.totalFlags === 1 ? '' : 's') + '</span>';
     html += '</header>';
+    html += '<div class="t3-card-body">';
 
-    if (notes.length === 0) {
-      html += '<div class="cp-empty">No HC notes recorded for this coach.</div>';
+    if (distribution.totalFlags === 0) {
+      html += '<div class="t3-empty">No failed standards in this period.</div>';
     } else {
-      html += '<div class="cp-notes-list">';
-      notes.forEach(function (n) {
-        var when = n.timestamp ?
-          n.timestamp.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) :
-          "";
-        html += '<div class="cp-note">';
-        html += '<div class="cp-note-when">' + esc(when) + '</div>';
-        if (n.client) {
-          html += '<div class="cp-note-client">Re: ' + esc(n.client) + '</div>';
-        }
-        html += '<div class="cp-note-body">' + esc(n.notes || "") + '</div>';
-        html += '</div>';
-      });
-      html += '</div>';
+      html += renderBarChart(distribution);
     }
 
     html += '</div>';
-    return html;
-  }
-
-  // ---------- Render: coach card ----------
-  function renderCoachCard(coach, clients, hcActions) {
-    var newRed = calcNewRed(clients);
-    var yrCum  = calcYellowRedCumulative(clients);
-    var bf     = calcBlackFlagged(clients);
-    var fs     = calcFormSubmission(clients);
-
-    var notes = coachAuditNotes(coach, hcActions);
-    var activeP = clientsInActivePathways(clients);
-    var blackC  = clientsWithBlackFlag(clients);
-    var missing = clientsMissingThisWeek(clients);
-
-    var html = '<section class="coach-card" data-coach="' + esc(coach) + '">';
-    // Header
-    html += '<header class="coach-card-header">';
-    html += '<div>';
-    html += '<h2 class="coach-card-name">' + esc(coach) + '</h2>';
-    html += '<div class="coach-card-meta">' + clients.length + ' active client' + (clients.length === 1 ? "" : "s") + '</div>';
-    html += '</div>';
-    html += '</header>';
-
-    // Metrics grid
-    html += '<div class="cp-metrics-grid">';
-    html += renderMetric(
-      "% New Red Flags",
-      fmtPct(newRed.numerator, newRed.denominator, newRed.pct),
-      colorForNewRed(newRed.pct),
-      false,
-      "Green ≤6% · Yellow 7–10% · Red >10%"
-    );
-    html += renderMetric(
-      "% Yellow/Red Cumulative",
-      fmtPct(yrCum.numerator, yrCum.denominator, yrCum.pct),
-      colorForYellowRedCum(yrCum.pct),
-      false,
-      "Green ≤15% · Yellow 16–20% · Red >20%"
-    );
-    html += renderMetric(
-      "% Black-Flagged",
-      fmtPct(bf.numerator, bf.denominator, bf.pct),
-      null,
-      true,
-      null
-    );
-    html += renderMetric(
-      "Form Submission Rate",
-      fmtPct(fs.numerator, fs.denominator, fs.pct),
-      colorForFormSubmit(fs.pct),
-      false,
-      "Green 100% · Red <100%"
-    );
-    html += '</div>';
-
-    // Active pathways
-    html += '<div class="cp-sublist">';
-    html += '<header class="cp-section-header">';
-    html += '<h4 class="cp-section-title">Clients in Active Pathways (' + activeP.length + ')</h4>';
-    html += '</header>';
-    html += renderClientList(activeP, {
-      emptyText: "No active pathways. ",
-      detail: pathwaySummary
-    });
-    html += '</div>';
-
-    // Black flag
-    html += '<div class="cp-sublist">';
-    html += '<header class="cp-section-header">';
-    html += '<h4 class="cp-section-title">Clients with Black Flag (' + blackC.length + ')</h4>';
-    html += '</header>';
-    html += renderClientList(blackC, {
-      emptyText: "No Black-flagged clients.",
-      detail: function (s) {
-        var bf = s.blackFlags || {};
-        return (bf.consecutiveGreenWeeks || 0) + "/6 Green weeks";
-      }
-    });
-    html += '</div>';
-
-    // Missing forms
-    html += '<div class="cp-sublist">';
-    html += '<header class="cp-section-header">';
-    html += '<h4 class="cp-section-title">Missing Forms This Week (' + missing.length + ')</h4>';
-    html += '</header>';
-    html += renderClientList(missing, {
-      emptyText: "All forms submitted.",
-      detail: null
-    });
-    html += '</div>';
-
-    // HC Notes
-    html += renderHCNotes(coach, notes);
-
     html += '</section>';
     return html;
   }
 
-  // ---------- Add Note modal flow ----------
-  // Uses a dedicated modal (#note-modal-backdrop) to avoid coupling with the
-  // Slack modal in Tab 1. The scaffold lives in index.html.
-  function openAddNoteModal(coach, ctx, onLogged) {
-    var backdrop = document.getElementById("note-modal-backdrop");
-    var textarea = document.getElementById("note-modal-textarea");
-    var meta = document.getElementById("note-modal-meta");
-    var saveBtn = document.getElementById("note-modal-save");
-    var closeBtn = document.getElementById("note-modal-close");
+  function renderBarChart(distribution) {
+    // Show only standards with count > 0, plus all standards at 0 to keep
+    // visibility consistent. Sort: all >0 first (already sorted by count
+    // desc from aggregator), then 0s at the bottom in the canonical order.
+    var withFlags = distribution.byStandard.filter(function (s) { return s.count > 0; });
+    var withoutFlags = distribution.byStandard.filter(function (s) { return s.count === 0; });
+    var ordered = withFlags.concat(withoutFlags);
 
-    if (!backdrop || !textarea || !saveBtn) {
-      if (root.console && root.console.warn) {
-        root.console.warn("Tab3: cannot open note modal — note modal scaffold missing in DOM");
-      }
+    var maxCount = ordered.length > 0 ? ordered[0].count : 0;
+
+    var html = '<div class="t3-bar-chart">';
+    ordered.forEach(function (s) {
+      var pct = maxCount > 0 ? (s.count / maxCount) * 100 : 0;
+      var zeroClass = s.count === 0 ? ' is-zero' : '';
+      var clickable = s.count > 0 ? ' is-clickable' : '';
+      html += '<div class="t3-bar-row' + zeroClass + clickable +
+        '" data-standard="' + esc(s.standard) + '"' +
+        (s.count > 0 ? ' tabindex="0" role="button"' : '') + '>';
+
+      html += '<div class="t3-bar-label">' + esc(shortStandard(s.standard)) + '</div>';
+      html += '<div class="t3-bar-track">';
+      html += '<div class="t3-bar-fill" style="width:' + pct + '%"></div>';
+      html += '</div>';
+      html += '<div class="t3-bar-value">';
+      html += '<span class="t3-bar-count">' + s.count + '</span>';
+      html += '<span class="t3-bar-pct">' + s.percentage + '%</span>';
+      html += '</div>';
+
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // ---------- Drill-down panel: clients per standard ----------
+  function renderStandardDrilldown(standard, distribution) {
+    var match = distribution.byStandard.find(function (s) {
+      return s.standard === standard;
+    });
+    if (!match) return "";
+
+    var html = '<section class="t3-drilldown">';
+    html += '<header class="t3-drilldown-header">';
+    html += '<div>';
+    html += '<h3 class="t3-drilldown-title">' + esc(shortStandard(standard)) + '</h3>';
+    html += '<span class="t3-drilldown-meta">' + match.count +
+      ' flag' + (match.count === 1 ? '' : 's') + ' from ' +
+      match.clients.length + ' client' + (match.clients.length === 1 ? '' : 's') + '</span>';
+    html += '</div>';
+    html += '<button type="button" class="t3-drilldown-close" aria-label="Close">×</button>';
+    html += '</header>';
+    html += '<div class="t3-drilldown-body">';
+
+    if (match.clients.length === 0) {
+      html += '<div class="t3-empty">No clients to show.</div>';
+    } else {
+      html += '<ul class="t3-client-list">';
+      match.clients.forEach(function (c) {
+        html += '<li class="t3-client-row" data-client="' + esc(c.clientName) +
+          '" tabindex="0" role="button">';
+        html += '<span class="t3-client-name">' + esc(c.clientName) + '</span>';
+        html += '<span class="t3-client-count">' + c.count +
+          ' flag' + (c.count === 1 ? '' : 's') + '</span>';
+        html += '</li>';
+      });
+      html += '</ul>';
+    }
+
+    html += '</div>';
+    html += '</section>';
+    return html;
+  }
+
+  // ---------- Main panel renderer ----------
+  function renderPanel(ctx) {
+    var container = document.getElementById("patterns-content");
+    if (!container) return;
+
+    var coaches = uniqueCoaches(ctx.states);
+
+    // Default selected coach: first alphabetically.
+    if (!viewState.selectedCoach || coaches.indexOf(viewState.selectedCoach) === -1) {
+      viewState.selectedCoach = coaches[0] || null;
+    }
+
+    if (!viewState.selectedCoach) {
+      container.innerHTML = renderHeader() +
+        '<div class="t3-empty-state">' +
+        '<p>No coaches with active clients to diagnose.</p>' +
+        '</div>';
       return;
     }
 
-    if (meta) meta.textContent = "Coach Audit Note · " + coach;
-    textarea.value = "";
-    textarea.placeholder = "Note about " + coach + "…";
-    saveBtn.disabled = false;
-    saveBtn.textContent = "Save note";
-
-    // Use cloning to clear any previous listener cleanly.
-    var freshSave = saveBtn.cloneNode(true);
-    saveBtn.parentNode.replaceChild(freshSave, saveBtn);
-    var freshClose = closeBtn ? closeBtn.cloneNode(true) : null;
-    if (freshClose && closeBtn) closeBtn.parentNode.replaceChild(freshClose, closeBtn);
-
-    function close() {
-      backdrop.classList.add("hidden");
-    }
-
-    freshSave.addEventListener("click", function () {
-      var note = textarea.value.trim();
-      if (!note) {
-        textarea.focus();
-        return;
-      }
-      freshSave.disabled = true;
-      freshSave.textContent = "Saving…";
-
-      var payload = {
-        client: null,
-        coach: coach,
-        pathway: "N/A",
-        standard: null,
-        actionType: "Coach Audit Note",
-        notes: note,
-        outcome: null,
-        followUpDueDate: null,
-        actionWeek: ctx.currentWeek
-      };
-
-      root.ActionsWriter.logAction(payload)
-        .then(function () {
-          close();
-          if (typeof onLogged === "function") onLogged();
-        })
-        .catch(function (err) {
-          freshSave.disabled = false;
-          freshSave.textContent = "Save note";
-          if (root.console && root.console.warn) {
-            root.console.warn("Tab3: failed to log Coach Audit Note: " + err.message);
-          }
-          alert("Failed to save note: " + err.message);
-        });
-    });
-
-    if (freshClose) freshClose.addEventListener("click", close);
-    backdrop.addEventListener("click", function (e) {
-      if (e.target.id === "note-modal-backdrop") close();
-    });
-
-    backdrop.classList.remove("hidden");
-    textarea.focus();
-  }
-
-  // ---------- Main render ----------
-  function render(states, hcActions, ctx) {
-    ctx = ctx || {};
-    var rootEl = document.getElementById("patterns-content");
-    if (!rootEl) return;
-
-    var buckets = bucketByCoach(states);
+    // Compute Component 1 data
+    var distribution = root.CoachDiagnosticsAggregators.calculateStandardDistribution(
+      ctx.formResponses,
+      ctx.roster,
+      viewState.selectedCoach,
+      viewState.periodDays
+    );
 
     var html = "";
-    html += '<div class="queue-header">';
-    html += '<div>';
-    html += '<h1>COACH PATTERNS</h1>';
-    html += '<div class="week-label">Scorecard metrics · current closed week</div>';
-    html += '</div>';
+    html += renderHeader();
+    html += renderToolbar(coaches);
+    html += '<div class="t3-grid">';
+
+    // Left: Component 1 (bars)
+    html += '<div class="t3-col t3-col-main">';
+    html += renderComponent1(distribution);
     html += '</div>';
 
-    if (buckets.length === 0) {
-      html += '<div class="placeholder"><h2>No coaches found</h2><p>The active roster is empty.</p></div>';
+    // Right: drill-down panel (sticky context)
+    html += '<aside class="t3-col t3-col-aside">';
+    if (viewState.drillDown && viewState.drillDown.kind === "standard") {
+      html += renderStandardDrilldown(viewState.drillDown.payload, distribution);
     } else {
-      html += '<div class="coach-grid">';
-      buckets.forEach(function (b) {
-        html += renderCoachCard(b.coach, b.clients, hcActions);
-      });
-      html += '</div>';
+      html += renderDrilldownPlaceholder();
     }
+    html += '</aside>';
 
-    rootEl.innerHTML = html;
+    html += '</div>';
 
-    wireClientRows(states, hcActions, ctx);
-    wireAddNote(ctx, states, hcActions);
+    container.innerHTML = html;
+    wireInteractions(ctx, distribution);
   }
 
-  function wireClientRows(states, hcActions, ctx) {
-    document.querySelectorAll(".cp-client-row").forEach(function (row) {
-      row.addEventListener("click", function () {
-        var clientName = row.getAttribute("data-client");
-        if (!clientName || !root.PathwayDetail) return;
-        root.PathwayDetail.open(clientName, {
-          states: states,
-          hcActions: hcActions,
-          formResponses: ctx.formResponses || [],
-          currentWeek: ctx.currentWeek,
-          onActionLogged: ctx.onActionLogged
-        });
+  function renderDrilldownPlaceholder() {
+    var html = '<section class="t3-drilldown is-placeholder">';
+    html += '<div class="t3-drilldown-placeholder-body">';
+    html += '<div class="t3-placeholder-icon">→</div>';
+    html += '<p class="t3-placeholder-text">Click a standard bar to see which clients contributed.</p>';
+    html += '</div>';
+    html += '</section>';
+    return html;
+  }
+
+  // ---------- Wire interactions ----------
+  function wireInteractions(ctx, distribution) {
+    // Coach selector
+    document.querySelectorAll(".t3-coach-tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var c = btn.getAttribute("data-coach");
+        if (c && c !== viewState.selectedCoach) {
+          viewState.selectedCoach = c;
+          viewState.drillDown = null; // reset drill-down on coach change
+          renderPanel(ctx);
+        }
       });
     });
-  }
 
-  function wireAddNote(ctx, states, hcActions) {
-    document.querySelectorAll(".cp-add-note-btn").forEach(function (btn) {
-      btn.addEventListener("click", function (e) {
-        e.stopPropagation();
-        var coach = btn.getAttribute("data-coach");
-        if (!coach || !root.ActionsWriter) return;
-        openAddNoteModal(coach, ctx, function () {
-          // Rebuild Tab 3 with refreshed data via the caller's refresh path.
-          if (typeof ctx.onActionLogged === "function") {
-            ctx.onActionLogged();
-          } else {
-            // Best-effort local refresh: re-render with current data.
-            render(states, hcActions, ctx);
-          }
-        });
+    // Period selector
+    document.querySelectorAll(".t3-period-tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var d = parseInt(btn.getAttribute("data-days"), 10);
+        if (!isNaN(d) && d !== viewState.periodDays) {
+          viewState.periodDays = d;
+          viewState.drillDown = null; // reset drill-down on period change
+          renderPanel(ctx);
+        }
+      });
+    });
+
+    // Bar click -> open standard drill-down
+    document.querySelectorAll(".t3-bar-row.is-clickable").forEach(function (row) {
+      var open = function () {
+        var std = row.getAttribute("data-standard");
+        if (std) {
+          viewState.drillDown = { kind: "standard", payload: std };
+          renderPanel(ctx);
+        }
+      };
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      });
+    });
+
+    // Drill-down close
+    var closeBtn = document.querySelector(".t3-drilldown-close");
+    if (closeBtn) {
+      closeBtn.addEventListener("click", function () {
+        viewState.drillDown = null;
+        renderPanel(ctx);
+      });
+    }
+
+    // Client row -> open PathwayDetail modal
+    document.querySelectorAll(".t3-client-row").forEach(function (row) {
+      var open = function () {
+        var clientName = row.getAttribute("data-client");
+        if (clientName && root.PathwayDetail && root.PathwayDetail.open) {
+          root.PathwayDetail.open(clientName, {
+            states: ctx.states,
+            hcActions: ctx.hcActions,
+            formResponses: ctx.formResponses
+          });
+        }
+      };
+      row.addEventListener("click", open);
+      row.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
       });
     });
   }
 
   // ---------- Public ----------
-  root.Tab3 = {
-    render: render,
-    _internal: {
-      THRESHOLDS: THRESHOLDS,
-      calcNewRed: calcNewRed,
-      calcYellowRedCumulative: calcYellowRedCumulative,
-      calcBlackFlagged: calcBlackFlagged,
-      calcFormSubmission: calcFormSubmission,
-      colorForNewRed: colorForNewRed,
-      colorForYellowRedCum: colorForYellowRedCum,
-      colorForFormSubmit: colorForFormSubmit
+  function render(ctx) {
+    if (!ctx) return;
+    if (!root.CoachDiagnosticsAggregators) {
+      var container = document.getElementById("patterns-content");
+      if (container) {
+        container.innerHTML = '<div class="error-state"><h2>Could not load Tab 3</h2>' +
+          '<p>CoachDiagnosticsAggregators module not available.</p></div>';
+      }
+      return;
     }
+    renderPanel(ctx);
+  }
+
+  root.Tab3 = {
+    render: render
   };
 })(typeof window !== "undefined" ? window : this);
