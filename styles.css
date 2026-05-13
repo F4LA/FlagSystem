@@ -1620,3 +1620,343 @@ button { font-family: inherit; }
   .pd-modal { max-width: 100%; max-height: 100vh; border-radius: 0; }
   .bf-card-body { padding-left: 20px; }
 }
+/* =====================================================================
+   Tab 3 — Coach Diagnostics
+   Block 1: scaffolding + Component 1 (Standard Failure Distribution)
+   ===================================================================== */
+ 
+/* ---------- Header ---------- */
+.t3-header {
+  margin-bottom: 20px;
+}
+.t3-title {
+  font-family: var(--font-display);
+  font-size: 36px;
+  letter-spacing: 0.04em;
+  color: var(--navy-900);
+  margin: 0 0 4px;
+}
+.t3-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+ 
+/* ---------- Toolbar (coach + period selectors) ---------- */
+.t3-toolbar {
+  display: flex;
+  gap: 28px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.t3-toolbar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.t3-toolbar-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+}
+ 
+/* Pill-style segmented controls for coach + period */
+.t3-coach-tabs,
+.t3-period-tabs {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+}
+.t3-coach-tab,
+.t3-period-tab {
+  background: transparent;
+  border: none;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 120ms ease;
+  letter-spacing: 0.01em;
+}
+.t3-coach-tab:hover,
+.t3-period-tab:hover {
+  color: var(--text);
+  background: rgba(34, 120, 172, 0.06);
+}
+.t3-coach-tab.is-active,
+.t3-period-tab.is-active {
+  background: var(--surface);
+  color: var(--steel-700);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-strong);
+}
+ 
+/* ---------- Layout grid ---------- */
+.t3-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.t3-col-main { min-width: 0; }
+.t3-col-aside { min-width: 0; }
+ 
+/* ---------- Card (used by all 3 components) ---------- */
+.t3-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.t3-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 14px 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.t3-card-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--steel-700);
+  margin: 0;
+}
+.t3-card-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+.t3-card-body {
+  padding: 16px 18px;
+}
+ 
+/* ---------- Bar chart (Component 1) ---------- */
+.t3-bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.t3-bar-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 86px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  transition: background 100ms ease;
+}
+.t3-bar-row.is-clickable {
+  cursor: pointer;
+}
+.t3-bar-row.is-clickable:hover {
+  background: var(--steel-tint);
+}
+.t3-bar-row.is-clickable:focus-visible {
+  outline: 2px solid var(--steel-400);
+  outline-offset: 1px;
+}
+.t3-bar-row.is-zero {
+  opacity: 0.5;
+}
+.t3-bar-label {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+.t3-bar-track {
+  height: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.t3-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--steel-700), var(--steel-400));
+  transition: width 200ms ease;
+}
+.t3-bar-row.is-zero .t3-bar-fill {
+  background: var(--border-strong);
+}
+.t3-bar-value {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: flex-end;
+}
+.t3-bar-count {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 0.02em;
+  color: var(--navy-800);
+  line-height: 1;
+}
+.t3-bar-pct {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 500;
+  min-width: 36px;
+  text-align: right;
+}
+ 
+/* ---------- Drill-down panel (aside) ---------- */
+.t3-drilldown {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  position: sticky;
+  top: 124px; /* below tab nav (60px top bar + 64px tab nav approx) */
+}
+.t3-drilldown.is-placeholder {
+  border-style: dashed;
+  background: var(--surface-2);
+  box-shadow: none;
+}
+.t3-drilldown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 14px 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.t3-drilldown-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  color: var(--navy-800);
+  margin: 0 0 2px;
+}
+.t3-drilldown-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.t3-drilldown-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 120ms ease;
+}
+.t3-drilldown-close:hover {
+  color: var(--text);
+}
+.t3-drilldown-body {
+  padding: 12px 14px 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.t3-drilldown-placeholder-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-faint);
+}
+.t3-placeholder-icon {
+  font-size: 24px;
+  color: var(--steel-400);
+  margin-bottom: 8px;
+}
+.t3-placeholder-text {
+  margin: 0;
+  font-size: 12.5px;
+  max-width: 220px;
+}
+ 
+/* ---------- Client list inside drill-down ---------- */
+.t3-client-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.t3-client-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 100ms ease;
+}
+.t3-client-row:hover {
+  background: var(--steel-tint);
+  border-color: var(--steel-400);
+}
+.t3-client-row:focus-visible {
+  outline: 2px solid var(--steel-400);
+  outline-offset: 1px;
+}
+.t3-client-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.t3-client-count {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+ 
+/* ---------- Empty states ---------- */
+.t3-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+  font-style: italic;
+}
+.t3-empty-state {
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 48px 32px;
+  text-align: center;
+  color: var(--text-muted);
+}
+ 
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  .t3-grid {
+    grid-template-columns: 1fr;
+  }
+  .t3-drilldown {
+    position: static;
+  }
+  .t3-bar-row {
+    grid-template-columns: 90px 1fr 64px;
+    gap: 8px;
+  }
+}
+ 
