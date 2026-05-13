@@ -126,6 +126,19 @@
 
     if (warnings.length === 0 && notifications.length === 0) return null;
 
+    // OPERATIONAL RULE (May 2026): If P1 Warning is active, suppress P2
+    // Notifications from the same client to avoid redundancy. P1 Warning
+    // already describes which standards failed in the acute crisis week(s);
+    // listing P2 Notifications for those same standards would just repeat
+    // the information. P2 Warnings (3+ weeks) and P3 Notifications/Warnings
+    // ARE kept because they convey cronicity information that P1 doesn't.
+    var hasP1Warning = warnings.some(function (w) { return w.pathway === "P1"; });
+    if (hasP1Warning) {
+      notifications = notifications.filter(function (n) {
+        return n.pathway !== "P2";
+      });
+    }
+
     var level, actionType, pathwayLabelStr;
     if (warnings.length > 0) {
       level = "Warning";
