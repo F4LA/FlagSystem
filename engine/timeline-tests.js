@@ -58,11 +58,11 @@
   }
 
   // Synthetic data helpers --------------------------------------------------
-  // Coaching Week boundaries (ET) for May 2026:
-  //   2026-CW17: Fri Apr 24 → Thu Apr 30
-  //   2026-CW18: Fri May 01 → Thu May 07
-  //   2026-CW19: Fri May 08 → Thu May 14
-  //   2026-CW20: Fri May 15 → Thu May 21
+  // Coaching Week boundaries (ET) under Thu-Wed definition, for April-May 2026:
+  //   2026-CW17: Thu Apr 16 → Wed Apr 22
+  //   2026-CW18: Thu Apr 23 → Wed Apr 29
+  //   2026-CW19: Thu Apr 30 → Wed May 6
+  //   2026-CW20: Thu May 7  → Wed May 13
 
   function tsInsideWeek(year, month, day) {
     // Noon ET ≈ 16:00 UTC during EDT (May)
@@ -82,10 +82,11 @@
     };
   }
 
-  // Mon May 11 noon ET. closedCoachingWeek = 2026-CW19 (Fri May 1 → Thu May 7).
-  // Wait — let me verify: Mon May 11 is in the week Fri May 8 → Thu May 14, which closes Thu May 14.
-  // That ISO-week-of-Thursday is CW20. So coachingWeekOf(May 11) = CW20 (in progress).
-  // closedCoachingWeek(May 11) = previousCoachingWeek(CW20) = CW19. ✓
+  // Mon May 11 2026, noon ET. Under Thu-Wed boundary:
+  //   May 11 is in the week Thu May 7 → Wed May 13, which closes Wed May 13.
+  //   ISO week of Wed May 13 2026 = CW20, so coachingWeekOf(May 11) = CW20 (in progress).
+  //   closedCoachingWeek(May 11) = previousCoachingWeek(CW20) = CW19
+  //     (CW19 spans Thu Apr 30 → Wed May 6).
   const CURRENT_DATE = new Date(Date.UTC(2026, 4, 11, 16, 0, 0));
 
   // Test suites -------------------------------------------------------------
@@ -302,9 +303,10 @@
     console.log('\n[Multiple submissions same week — last-wins]');
 
     test('two submissions same week → latest timestamp wins', function () {
+      // Both dates inside 2026-CW19 (Thu Apr 30 → Wed May 6).
       const responses = [
-        sub({ ts: tsInsideWeek(2026, 5, 5), client: 'John Doe', standards: [] }),
-        sub({ ts: tsInsideWeek(2026, 5, 7), client: 'John Doe', standards: STANDARD_NAMES })
+        sub({ ts: tsInsideWeek(2026, 5, 4), client: 'John Doe', standards: [] }),
+        sub({ ts: tsInsideWeek(2026, 5, 6), client: 'John Doe', standards: STANDARD_NAMES })
       ];
       const out = buildClientTimeline('John Doe', responses, { currentDate: CURRENT_DATE });
       const cw19 = out.find(function (r) { return r.weekId === '2026-CW19'; });
@@ -315,10 +317,11 @@
     });
 
     test('three submissions same week → most recent wins', function () {
+      // All three dates inside 2026-CW19 (Thu Apr 30 → Wed May 6).
       const responses = [
-        sub({ ts: tsInsideWeek(2026, 5, 5), client: 'John Doe', standards: [] }),
-        sub({ ts: tsInsideWeek(2026, 5, 6), client: 'John Doe', standards: ['Check-In Submission'] }),
-        sub({ ts: tsInsideWeek(2026, 5, 7), client: 'John Doe', standards: STANDARD_NAMES })
+        sub({ ts: tsInsideWeek(2026, 5, 4), client: 'John Doe', standards: [] }),
+        sub({ ts: tsInsideWeek(2026, 5, 5), client: 'John Doe', standards: ['Check-In Submission'] }),
+        sub({ ts: tsInsideWeek(2026, 5, 6), client: 'John Doe', standards: STANDARD_NAMES })
       ];
       const out = buildClientTimeline('John Doe', responses, { currentDate: CURRENT_DATE });
       const cw19 = out.find(function (r) { return r.weekId === '2026-CW19'; });
@@ -328,20 +331,20 @@
   }
 
   function suite_weekBoundaries() {
-    console.log('\n[Coaching Week boundaries — Friday/Thursday rollover]');
+    console.log('\n[Coaching Week boundaries — Wednesday/Thursday rollover]');
 
-    test('Thu 11pm ET → assigned to closing week', function () {
-      // Thu May 7, 11pm ET = Fri May 8, 03:00 UTC (EDT = UTC-4)
-      const ts = new Date(Date.UTC(2026, 4, 8, 3, 0, 0));
+    test('Wed 11pm ET → assigned to closing week', function () {
+      // Wed May 6, 11pm ET = Thu May 7, 03:00 UTC (EDT = UTC-4)
+      const ts = new Date(Date.UTC(2026, 4, 7, 3, 0, 0));
       const responses = [sub({ ts: ts, client: 'John Doe', standards: STANDARD_NAMES })];
       const out = buildClientTimeline('John Doe', responses, { currentDate: CURRENT_DATE });
       const cw19 = out.find(function (r) { return r.weekId === '2026-CW19'; });
-      assertEqual(cw19.status, 'evaluable', 'Thu 11pm ET should land in CW19');
+      assertEqual(cw19.status, 'evaluable', 'Wed 11pm ET should land in CW19');
     });
 
-    test('Fri 1am ET → assigned to NEW week (CW20)', function () {
-      // Fri May 8, 1am ET = Fri May 8, 05:00 UTC
-      const ts = new Date(Date.UTC(2026, 4, 8, 5, 0, 0));
+    test('Thu 1am ET → assigned to NEW week (CW20)', function () {
+      // Thu May 7, 1am ET = Thu May 7, 05:00 UTC
+      const ts = new Date(Date.UTC(2026, 4, 7, 5, 0, 0));
       const responses = [sub({ ts: ts, client: 'John Doe', standards: STANDARD_NAMES })];
       const out = buildClientTimeline('John Doe', responses, {
         currentDate: CURRENT_DATE,
@@ -492,6 +495,14 @@
     console.log('\n[End-to-end scenario — P2 Nutrition pattern]');
 
     test('Standards v3.3 example: 4 nutrition fails with exempt in middle', function () {
+      // Window: 2026-CW15 (Thu Apr 2 → Wed Apr 8) to 2026-CW19 (Thu Apr 30 → Wed May 6).
+      // One submission per coaching week, each landing inside its target week
+      // under the Thu-Wed boundary.
+      //   2026-CW15: Apr 7  (Tuesday inside Thu Apr 2 → Wed Apr 8)
+      //   2026-CW16: Apr 14 (Tuesday inside Thu Apr 9 → Wed Apr 15)
+      //   2026-CW17: Apr 21 (Tuesday inside Thu Apr 16 → Wed Apr 22) — exempt
+      //   2026-CW18: Apr 28 (Tuesday inside Thu Apr 23 → Wed Apr 29)
+      //   2026-CW19: May 5  (Tuesday inside Thu Apr 30 → Wed May 6)
       const baseStandards = ['Check-In Submission', 'Training Adherence', 'Movement Target', 'Technique Feedback'];
       const responses = [
         sub({ ts: tsInsideWeek(2026, 4, 7),  client: 'John Doe', standards: baseStandards }),
