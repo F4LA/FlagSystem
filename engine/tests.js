@@ -1,6 +1,9 @@
 /**
  * tests.js — synthetic test suite for coaching-week.js
  * Runs in Node and in the browser (loaded by tests.html).
+ *
+ * Coaching Week: Thursday 00:00:00 ET through Wednesday 23:59:59.999 ET.
+ * Each week is labeled by the ISO 8601 week number of its closing Wednesday.
  */
 
 (function (root, factory) {
@@ -42,22 +45,29 @@
   // ---------------------------------------------------------------------------
   // Basic mapping: a known mid-week date
   // ---------------------------------------------------------------------------
+  //
+  // Reference calendar (May 2026, ET):
+  //   Thu Apr 30 — Wed May 6 → 2026-CW19  (closing Wed May 6 in ISO week 19)
+  //   Thu May 7  — Wed May 13 → 2026-CW20
+  //   Thu May 14 — Wed May 20 → 2026-CW21
+  //   Thu May 21 — Wed May 27 → 2026-CW22
+  // ---------------------------------------------------------------------------
 
   test('Tuesday 2026-05-05 ET maps to 2026-CW19', function () {
-    // Tue May 5 2026 is in the Friday May 1 -> Thursday May 7 window.
-    // Thu May 7 2026 falls in ISO week 19 of 2026.
+    // Tue May 5 2026 is in the Thursday Apr 30 -> Wednesday May 6 window.
+    // Wed May 6 2026 falls in ISO week 19 of 2026.
     const d = ET(2026, 5, 5, 10, 0, 0);
     eq(CW.coachingWeekOf(d), '2026-CW19');
   });
 
-  test('coachingWeekRange("2026-CW19") returns Fri May 1 00:00 ET to Thu May 7 23:59:59.999 ET', function () {
+  test('coachingWeekRange("2026-CW19") returns Thu Apr 30 00:00 ET to Wed May 6 23:59:59.999 ET', function () {
     const r = CW.coachingWeekRange('2026-CW19');
     const startEt = CW._internal.toET(r.start);
     const endEt = CW._internal.toET(r.end);
     eq([startEt.year, startEt.month, startEt.day, startEt.hour, startEt.minute, startEt.second, startEt.weekday],
-       [2026, 5, 1, 0, 0, 0, 5], 'start');
+       [2026, 4, 30, 0, 0, 0, 4], 'start');
     eq([endEt.year, endEt.month, endEt.day, endEt.hour, endEt.minute, endEt.second, endEt.weekday],
-       [2026, 5, 7, 23, 59, 59, 4], 'end');
+       [2026, 5, 6, 23, 59, 59, 3], 'end');
   });
 
   test('coachingWeekRangeFromDate composes correctly', function () {
@@ -70,9 +80,9 @@
 
   test('Round-trip: any date inside its range', function () {
     const samples = [
-      ET(2026, 5, 1, 0, 0, 0),      // Friday start
+      ET(2026, 4, 30, 0, 0, 0),     // Thursday start
       ET(2026, 5, 4, 12, 0, 0),     // Monday noon
-      ET(2026, 5, 7, 23, 59, 59),   // Thursday last second
+      ET(2026, 5, 6, 23, 59, 59),   // Wednesday last second
       ET(2025, 12, 31, 15, 0, 0),
       ET(2027, 1, 1, 8, 0, 0),
       ET(2024, 7, 4, 9, 0, 0),
@@ -85,63 +95,72 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Friday/Thursday rollover
+  // Thursday/Wednesday rollover
   // ---------------------------------------------------------------------------
 
-  test('Thursday 2026-05-07 23:59:59 ET is in 2026-CW19', function () {
-    const d = ET(2026, 5, 7, 23, 59, 59);
+  test('Wednesday 2026-05-06 23:59:59 ET is in 2026-CW19', function () {
+    const d = ET(2026, 5, 6, 23, 59, 59);
     eq(CW.coachingWeekOf(d), '2026-CW19');
   });
 
-  test('Friday 2026-05-08 00:00:00 ET is in 2026-CW20 (new week)', function () {
-    const d = ET(2026, 5, 8, 0, 0, 0);
+  test('Thursday 2026-05-07 00:00:00 ET is in 2026-CW20 (new week)', function () {
+    const d = ET(2026, 5, 7, 0, 0, 0);
     eq(CW.coachingWeekOf(d), '2026-CW20');
   });
 
-  test('Same instant in PT (Thursday evening) still resolves via ET anchoring', function () {
-    // Thu May 7 2026 21:00 PT = Fri May 8 2026 00:00 ET
-    // PT is UTC-7 in May (PDT). So this instant is 2026-05-08T04:00:00Z.
-    const instant = new Date(Date.UTC(2026, 4, 8, 4, 0, 0));
+  test('Same instant in PT (Wednesday evening) still resolves via ET anchoring', function () {
+    // Wed May 6 2026 21:00 PT = Thu May 7 2026 00:00 ET
+    // PT is UTC-7 in May (PDT). So this instant is 2026-05-07T04:00:00Z.
+    const instant = new Date(Date.UTC(2026, 4, 7, 4, 0, 0));
     eq(CW.coachingWeekOf(instant), '2026-CW20');
   });
 
   // ---------------------------------------------------------------------------
   // Year boundary
   // ---------------------------------------------------------------------------
+  //
+  // Reference calendar around 2025/2026 boundary (ET):
+  //   2026-CW01 closes on Wed Dec 31 2025 (ISO week 1 of 2026).
+  //   Span: Thu Dec 25 2025 → Wed Dec 31 2025.
+  //   2026-CW02 closes on Wed Jan 7 2026.
+  //   Span: Thu Jan 1 2026 → Wed Jan 7 2026.
+  // ---------------------------------------------------------------------------
 
-  test('Dec 30 2025 (Tue) is in ISO week 1 of 2026 -> labeled 2026-CW01', function () {
-    // Tue Dec 30 2025 is in ISO week 2026-W01 (closing Thursday is Jan 1 2026).
+  test('Dec 30 2025 (Tue) is in 2026-CW01', function () {
     const d = ET(2025, 12, 30, 12, 0, 0);
     eq(CW.coachingWeekOf(d), '2026-CW01');
   });
 
-  test('Jan 1 2026 (Thu) is closing day of 2026-CW01', function () {
-    const d = ET(2026, 1, 1, 18, 0, 0);
+  test('Dec 31 2025 (Wed) is the closing day of 2026-CW01', function () {
+    const d = ET(2025, 12, 31, 18, 0, 0);
     eq(CW.coachingWeekOf(d), '2026-CW01');
   });
 
-  test('Jan 2 2026 (Fri) starts 2026-CW02', function () {
-    const d = ET(2026, 1, 2, 0, 0, 0);
+  test('Jan 1 2026 (Thu) starts 2026-CW02', function () {
+    const d = ET(2026, 1, 1, 0, 0, 0);
     eq(CW.coachingWeekOf(d), '2026-CW02');
   });
 
-  test('Range of 2026-CW01 spans Dec 26 2025 to Jan 1 2026 ET', function () {
+  test('Range of 2026-CW01 spans Dec 25 2025 to Dec 31 2025 ET', function () {
     const r = CW.coachingWeekRange('2026-CW01');
     const s = CW._internal.toET(r.start);
     const e = CW._internal.toET(r.end);
-    eq([s.year, s.month, s.day, s.weekday], [2025, 12, 26, 5], 'start (Friday)');
-    eq([e.year, e.month, e.day, e.weekday], [2026, 1, 1, 4], 'end (Thursday)');
+    eq([s.year, s.month, s.day, s.weekday], [2025, 12, 25, 4], 'start (Thursday)');
+    eq([e.year, e.month, e.day, e.weekday], [2025, 12, 31, 3], 'end (Wednesday)');
   });
 
   // ---------------------------------------------------------------------------
   // ISO week 53
   // ---------------------------------------------------------------------------
+  //
+  // 2026-CW53 closes on Wed Dec 30 2026 (ISO week 53 of 2026).
+  // ---------------------------------------------------------------------------
 
   test('2026-CW53 is valid (2026 has 53 ISO weeks)', function () {
     const r = CW.coachingWeekRange('2026-CW53');
     const e = CW._internal.toET(r.end);
-    // Closing Thursday of 2026-W53 is Dec 31 2026.
-    eq([e.year, e.month, e.day, e.weekday], [2026, 12, 31, 4]);
+    // Closing Wednesday of 2026-W53 is Dec 30 2026.
+    eq([e.year, e.month, e.day, e.weekday], [2026, 12, 30, 3]);
   });
 
   test('nextCoachingWeek("2026-CW53") = "2027-CW01"', function () {
@@ -224,54 +243,60 @@
     eq(CW.closedCoachingWeek(d), '2026-CW18');
   });
 
-  test('closedCoachingWeek on Friday morning returns just-closed week', function () {
-    // Fri May 8 2026 09:00 ET. CW20 just started; CW19 closed Thursday night.
-    const d = ET(2026, 5, 8, 9, 0, 0);
+  test('closedCoachingWeek on Thursday morning returns just-closed week', function () {
+    // Thu May 7 2026 09:00 ET. CW20 just started; CW19 closed Wednesday night.
+    const d = ET(2026, 5, 7, 9, 0, 0);
     eq(CW.closedCoachingWeek(d), '2026-CW19');
   });
 
-  test('closedCoachingWeek at Friday 00:00:01 ET returns just-closed week', function () {
-    const d = ET(2026, 5, 8, 0, 0, 1);
+  test('closedCoachingWeek at Thursday 00:00:01 ET returns just-closed week', function () {
+    const d = ET(2026, 5, 7, 0, 0, 1);
     eq(CW.closedCoachingWeek(d), '2026-CW19');
   });
 
-  test('closedCoachingWeek on Thursday 23:59:00 ET returns previous (current still open)', function () {
-    const d = ET(2026, 5, 7, 23, 59, 0);
+  test('closedCoachingWeek on Wednesday 23:59:00 ET returns previous (current still open)', function () {
+    const d = ET(2026, 5, 6, 23, 59, 0);
     eq(CW.closedCoachingWeek(d), '2026-CW18');
   });
 
-  test('closedCoachingWeek at Thursday 23:59:59.999 ET returns the week that just closed', function () {
-    const d = ET(2026, 5, 7, 23, 59, 59, 999);
+  test('closedCoachingWeek at Wednesday 23:59:59.999 ET returns the week that just closed', function () {
+    const d = ET(2026, 5, 6, 23, 59, 59, 999);
     eq(CW.closedCoachingWeek(d), '2026-CW19');
   });
 
   // ---------------------------------------------------------------------------
   // DST transitions (ET)
   // ---------------------------------------------------------------------------
+  //
+  // Reference: spring forward 2026 = Sun Mar 8, fall back 2026 = Sun Nov 1.
+  //
+  // Under Thu-Wed boundary:
+  //   Sun Mar 8 2026 is in the week Thu Mar 5 → Wed Mar 11, closing Wed Mar 11.
+  //     ISO week of Wed Mar 11 2026 = ISO week 11 → labeled 2026-CW11.
+  //   Sun Nov 1 2026 is in the week Thu Oct 29 → Wed Nov 4, closing Wed Nov 4.
+  //     ISO week of Wed Nov 4 2026 = ISO week 45 → labeled 2026-CW45.
+  // ---------------------------------------------------------------------------
 
-  test('Spring forward 2026 (Mar 8): coaching week range still spans Fri 00:00 to Thu 23:59:59 ET', function () {
-    // Mar 8 2026 (Sun) is the spring-forward day in ET. It falls in the
-    // Friday Mar 6 -> Thursday Mar 12 coaching week (closing Thu Mar 12 is in ISO week 11).
+  test('Spring forward 2026 (Mar 8): coaching week range still spans Thu 00:00 to Wed 23:59:59 ET', function () {
     const d = ET(2026, 3, 8, 4, 0, 0); // Sunday after spring forward
     const wkId = CW.coachingWeekOf(d);
     eq(wkId, '2026-CW11');
     const r = CW.coachingWeekRange(wkId);
     const s = CW._internal.toET(r.start);
     const e = CW._internal.toET(r.end);
-    eq([s.year, s.month, s.day, s.hour, s.minute, s.second, s.weekday], [2026, 3, 6, 0, 0, 0, 5], 'spring start');
-    eq([e.year, e.month, e.day, e.hour, e.minute, e.second, e.weekday], [2026, 3, 12, 23, 59, 59, 4], 'spring end');
+    eq([s.year, s.month, s.day, s.hour, s.minute, s.second, s.weekday], [2026, 3, 5, 0, 0, 0, 4], 'spring start');
+    eq([e.year, e.month, e.day, e.hour, e.minute, e.second, e.weekday], [2026, 3, 11, 23, 59, 59, 3], 'spring end');
   });
 
-  test('Fall back 2026 (Nov 1): coaching week range still spans Fri 00:00 to Thu 23:59:59 ET', function () {
-    // Nov 1 2026 (Sun) is fall-back day. Coaching week is Fri Oct 30 -> Thu Nov 5.
+  test('Fall back 2026 (Nov 1): coaching week range still spans Thu 00:00 to Wed 23:59:59 ET', function () {
     const d = ET(2026, 11, 1, 12, 0, 0);
     const wkId = CW.coachingWeekOf(d);
     eq(wkId, '2026-CW45');
     const r = CW.coachingWeekRange(wkId);
     const s = CW._internal.toET(r.start);
     const e = CW._internal.toET(r.end);
-    eq([s.year, s.month, s.day, s.hour, s.minute, s.second, s.weekday], [2026, 10, 30, 0, 0, 0, 5], 'fall start');
-    eq([e.year, e.month, e.day, e.hour, e.minute, e.second, e.weekday], [2026, 11, 5, 23, 59, 59, 4], 'fall end');
+    eq([s.year, s.month, s.day, s.hour, s.minute, s.second, s.weekday], [2026, 10, 29, 0, 0, 0, 4], 'fall start');
+    eq([e.year, e.month, e.day, e.hour, e.minute, e.second, e.weekday], [2026, 11, 4, 23, 59, 59, 3], 'fall end');
   });
 
   // ---------------------------------------------------------------------------
