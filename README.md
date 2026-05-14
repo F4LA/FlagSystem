@@ -1,8 +1,34 @@
+[README (1).md](https://github.com/user-attachments/files/27739608/README.1.md)
 # Flag System Dashboard
 
 Operational console the Head Coach uses on Fridays to execute the Flag System workflow.
 
 **Status:** v1.0 — Tab 1 (Friday Action Queue) complete. Tabs 2–4 are placeholders.
+
+---
+
+## ⚠️ Shared Engine — Coordination Required
+
+The files under `/engine/` are consumed externally by the **Coach Pulse Dashboard** (repo `F4LA/CoachPulse`) via CDN with a pinned commit hash.
+
+**Before modifying any file in `/engine/`, you MUST:**
+
+1. Read `Engine_Change_Protocol.md` in the Strong Standard project files.
+2. Confirm both dashboards will be updated in coordination.
+3. After deploying changes here, bump the commit hash in `F4LA/CoachPulse/index.html` to pull the new engine version.
+
+**Shared files:**
+
+- `engine/coaching-week.js`
+- `engine/client-timeline.js`
+- `engine/consecutive-evaluable.js`
+- `engine/pathway-evaluators.js`
+- `engine/color-deriver.js`
+- `engine/pathway-engine.js`
+
+Changes to anything outside `/engine/` (the `dashboard/`, `apps-script/` folders, or root-level files like `index.html`, `app.js`, `styles.css`) do NOT require coordination.
+
+---
 
 **Reference:** Flag System Dashboard Technical Design Document v1.0.
 
