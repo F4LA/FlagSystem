@@ -1,4 +1,26 @@
 /**
+ * ============================================================================
+ * ⚠️  SHARED MODULE — READ BEFORE MODIFYING  ⚠️
+ * ============================================================================
+ *
+ * This file is consumed externally by the Coach Pulse Dashboard
+ * (repo F4LA/CoachPulse) via CDN with a pinned commit hash.
+ *
+ * Any modification here can break Coach Pulse if not coordinated.
+ *
+ * BEFORE MODIFYING THIS FILE:
+ *   1. Read Engine_Change_Protocol.md in the Strong Standard project files.
+ *   2. Confirm with the user that the change should apply to all consumers.
+ *   3. After deploying, bump the commit hash in F4LA/CoachPulse/index.html.
+ *
+ * Consumers currently importing this file:
+ *   - F4LA/FlagSystem (this repo)
+ *   - F4LA/CoachPulse (Coach Pulse Dashboard)
+ *
+ * ============================================================================
+ */
+
+/**
  * client-timeline.js
  *
  * Step 3b of the Pathway Calculation Engine.
