@@ -1,33 +1,11 @@
 /**
- * ============================================================================
- * ⚠️  SHARED MODULE — READ BEFORE MODIFYING  ⚠️
- * ============================================================================
- *
- * This file is consumed externally by the Coach Pulse Dashboard
- * (repo F4LA/CoachPulse) via CDN with a pinned commit hash.
- *
- * Any modification here can break Coach Pulse if not coordinated.
- *
- * BEFORE MODIFYING THIS FILE:
- *   1. Read Engine_Change_Protocol.md in the Strong Standard project files.
- *   2. Confirm with the user that the change should apply to all consumers.
- *   3. After deploying, bump the commit hash in F4LA/CoachPulse/index.html.
- *
- * Consumers currently importing this file:
- *   - F4LA/FlagSystem (this repo)
- *   - F4LA/CoachPulse (Coach Pulse Dashboard)
- *
- * ============================================================================
- */
-
-/**
  * coaching-week.js
  *
  * Utility module for the Strong Standard Flag System Pathway Engine.
  *
- * Defines the "Coaching Week": Friday 00:00:00 ET through Thursday 23:59:59.999 ET.
+ * Defines the "Coaching Week": Thursday 00:00:00 ET through Wednesday 23:59:59.999 ET.
  * Each Coaching Week is labeled with the ISO 8601 week number that contains its
- * closing Thursday, formatted as "YYYY-CW##" (e.g., "2026-CW19").
+ * closing Wednesday, formatted as "YYYY-CW##" (e.g., "2026-CW19").
  *
  * All date math is anchored to America/New_York to handle DST correctly.
  *
@@ -129,18 +107,22 @@
   }
 
   /**
-   * Returns the Date (at noon ET to avoid DST edge weirdness) of the Thursday
+   * Returns the Date (at noon ET to avoid DST edge weirdness) of the Wednesday
    * belonging to the given ISO year and ISO week.
+   *
+   * Wednesday and Thursday of any calendar week share the same ISO week, so the
+   * "Jan 4 anchor" math is identical to a Thursday-of-iso-week function with the
+   * target weekday shifted from 4 (Thu) to 3 (Wed).
    */
-  function thursdayOfIsoWeek(isoYear, isoWeek) {
+  function wednesdayOfIsoWeek(isoYear, isoWeek) {
     // Jan 4 is always in ISO week 1 of its ISO year.
     const jan4 = fromET(isoYear, 1, 4, 12, 0, 0, 0);
     const jan4Et = toET(jan4);
     const jan4DayNum = jan4Et.weekday === 0 ? 7 : jan4Et.weekday; // Sun=7, Mon=1..Sat=6
-    // Thursday of week 1: jan4 shifted so weekday becomes 4 (Thu).
-    const week1ThursdayDay = 4 - jan4DayNum + jan4Et.day;
-    // Thursday of target week.
-    const targetDay = week1ThursdayDay + (isoWeek - 1) * 7;
+    // Wednesday of week 1: jan4 shifted so weekday becomes 3 (Wed).
+    const week1WednesdayDay = 3 - jan4DayNum + jan4Et.day;
+    // Wednesday of target week.
+    const targetDay = week1WednesdayDay + (isoWeek - 1) * 7;
     // Build a Date by adding (targetDay - jan4Et.day) days to jan4 noon ET.
     const offsetDays = targetDay - jan4Et.day;
     const result = new Date(jan4.getTime() + offsetDays * 86400000);
@@ -180,47 +162,47 @@
 
   /**
    * Returns the Coaching Week identifier ("YYYY-CW##") for the given Date.
-   * The Coaching Week is the Friday-to-Thursday window containing the date,
-   * labeled by the ISO week of its closing Thursday.
+   * The Coaching Week is the Thursday-to-Wednesday window containing the date,
+   * labeled by the ISO week of its closing Wednesday.
    */
   function coachingWeekOf(date) {
     if (!(date instanceof Date) || isNaN(date.getTime())) {
       throw new Error('coachingWeekOf: invalid Date');
     }
     const et = toET(date);
-    // Find the closing Thursday of the Coaching Week containing this date.
+    // Find the closing Wednesday of the Coaching Week containing this date.
     // weekday: Sun=0, Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6
-    // If today is Fri/Sat/Sun/Mon/Tue/Wed/Thu, the closing Thursday is:
-    //   Fri (5)  -> +6 days
-    //   Sat (6)  -> +5 days
-    //   Sun (0)  -> +4 days
-    //   Mon (1)  -> +3 days
-    //   Tue (2)  -> +2 days
-    //   Wed (3)  -> +1 day
-    //   Thu (4)  -> +0 days
+    // If today is Thu/Fri/Sat/Sun/Mon/Tue/Wed, the closing Wednesday is:
+    //   Thu (4)  -> +6 days
+    //   Fri (5)  -> +5 days
+    //   Sat (6)  -> +4 days
+    //   Sun (0)  -> +3 days
+    //   Mon (1)  -> +2 days
+    //   Tue (2)  -> +1 day
+    //   Wed (3)  -> +0 days
     const wd = et.weekday;
-    const daysToThursday = (4 - wd + 7) % 7; // 0..6
-    // Build a Date at noon ET on the date itself, then add daysToThursday.
+    const daysToWednesday = (3 - wd + 7) % 7; // 0..6
+    // Build a Date at noon ET on the date itself, then add daysToWednesday.
     const baseNoon = fromET(et.year, et.month, et.day, 12, 0, 0, 0);
-    const closingThursday = new Date(baseNoon.getTime() + daysToThursday * 86400000);
-    const { isoYear, isoWeek } = isoWeekOf(closingThursday);
+    const closingWednesday = new Date(baseNoon.getTime() + daysToWednesday * 86400000);
+    const { isoYear, isoWeek } = isoWeekOf(closingWednesday);
     return formatWeekId(isoYear, isoWeek);
   }
 
   /**
    * Returns { start: Date, end: Date } for the given week identifier.
-   * start = Friday 00:00:00.000 ET (the day after the previous Thursday)
-   * end   = Thursday 23:59:59.999 ET (the closing Thursday)
+   * start = Thursday 00:00:00.000 ET (the day after the previous Wednesday)
+   * end   = Wednesday 23:59:59.999 ET (the closing Wednesday)
    */
   function coachingWeekRange(weekId) {
     const { isoYear, isoWeek } = parseWeekId(weekId);
-    const thuNoon = thursdayOfIsoWeek(isoYear, isoWeek);
+    const wedNoon = wednesdayOfIsoWeek(isoYear, isoWeek);
+    const wedEt = toET(wedNoon);
+    const end = fromET(wedEt.year, wedEt.month, wedEt.day, 23, 59, 59, 999);
+    // Thursday before is 6 days earlier.
+    const thuNoon = new Date(wedNoon.getTime() - 6 * 86400000);
     const thuEt = toET(thuNoon);
-    const end = fromET(thuEt.year, thuEt.month, thuEt.day, 23, 59, 59, 999);
-    // Friday before is 6 days earlier.
-    const friNoon = new Date(thuNoon.getTime() - 6 * 86400000);
-    const friEt = toET(friNoon);
-    const start = fromET(friEt.year, friEt.month, friEt.day, 0, 0, 0, 0);
+    const start = fromET(thuEt.year, thuEt.month, thuEt.day, 0, 0, 0, 0);
     return { start, end };
   }
 
@@ -233,7 +215,7 @@
 
   /**
    * Returns the identifier of the Coaching Week N weeks before weekId.
-   * Computed by date arithmetic (subtracting 7*N days from the closing Thursday)
+   * Computed by date arithmetic (subtracting 7*N days from the closing Wednesday)
    * so year and ISO-week-53 boundaries are handled naturally.
    */
   function previousCoachingWeek(weekId, n) {
@@ -242,8 +224,8 @@
       throw new Error('previousCoachingWeek: n must be a non-negative integer');
     }
     const { isoYear, isoWeek } = parseWeekId(weekId);
-    const thuNoon = thursdayOfIsoWeek(isoYear, isoWeek);
-    const shifted = new Date(thuNoon.getTime() - n * 7 * 86400000);
+    const wedNoon = wednesdayOfIsoWeek(isoYear, isoWeek);
+    const shifted = new Date(wedNoon.getTime() - n * 7 * 86400000);
     const iso = isoWeekOf(shifted);
     return formatWeekId(iso.isoYear, iso.isoWeek);
   }
@@ -257,8 +239,8 @@
       throw new Error('nextCoachingWeek: n must be a non-negative integer');
     }
     const { isoYear, isoWeek } = parseWeekId(weekId);
-    const thuNoon = thursdayOfIsoWeek(isoYear, isoWeek);
-    const shifted = new Date(thuNoon.getTime() + n * 7 * 86400000);
+    const wedNoon = wednesdayOfIsoWeek(isoYear, isoWeek);
+    const shifted = new Date(wedNoon.getTime() + n * 7 * 86400000);
     const iso = isoWeekOf(shifted);
     return formatWeekId(iso.isoYear, iso.isoWeek);
   }
@@ -308,15 +290,15 @@
 
   /**
    * Returns the identifier of the most recently CLOSED Coaching Week as of currentDate.
-   * A Coaching Week closes at Thursday 23:59:59.999 ET.
+   * A Coaching Week closes at Wednesday 23:59:59.999 ET.
    * If currentDate falls inside an open week, returns the previous week.
-   * If currentDate is exactly at or after Friday 00:00 ET (start of new week),
-   * the just-ended week (Thursday before) is the closed one.
+   * If currentDate is exactly at or after Thursday 00:00 ET (start of new week),
+   * the just-ended week (Wednesday before) is the closed one.
    */
   function closedCoachingWeek(currentDate) {
     const currentWeek = coachingWeekOf(currentDate);
     const range = coachingWeekRange(currentWeek);
-    // If currentDate is exactly at end (Thursday 23:59:59.999), this week
+    // If currentDate is exactly at end (Wednesday 23:59:59.999), this week
     // has just closed. Otherwise current week is still open, so closed = previous.
     if (currentDate.getTime() >= range.end.getTime()) {
       return currentWeek;
@@ -343,7 +325,7 @@
       toET,
       fromET,
       isoWeekOf,
-      thursdayOfIsoWeek,
+      wednesdayOfIsoWeek,
       parseWeekId,
       formatWeekId
     }
