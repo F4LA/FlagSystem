@@ -92,7 +92,7 @@
     onSent: null          // callback to disable the originating button
   };
 
-  function openSlackModal(payload, slackText, metaLine, onSent) {
+  function openSlackModal(payload, slackText, metaLine, onSent, alreadyLogged) {
     modalState.open = true;
     modalState.payload = payload;
     modalState.onSent = onSent;
@@ -101,8 +101,14 @@
     var ta = document.getElementById("modal-textarea");
     ta.value = slackText;
     document.getElementById("modal-copy-label").textContent = "Copy";
-    document.getElementById("modal-mark-sent").disabled = false;
-    document.getElementById("modal-mark-sent").textContent = "Mark sent →";
+    var markBtn = document.getElementById("modal-mark-sent");
+    if (alreadyLogged) {
+      markBtn.disabled = true;
+      markBtn.textContent = "Logged ✓";
+    } else {
+      markBtn.disabled = false;
+      markBtn.textContent = "Mark sent →";
+    }
 
     document.getElementById("slack-modal-backdrop").classList.remove("hidden");
     ta.focus();
@@ -302,7 +308,34 @@
     html += '</div></div>';
     html += '<div class="action-buttons">';
     html += '<button class="action-btn action-btn-primary js-generate-slack" type="button">Generate Slack</button>';
-    html += '<button class="action-btn js-mark-sent-direct" type="button">Mark sent</button>';
+    if (a.alreadyLogged) {
+      html += '<button class="action-btn js-mark-sent-direct" type="button" disabled>Logged ✓</button>';
+    } else {
+      html += '<button class="action-btn js-mark-sent-direct" type="button">Mark sent</button>';
+    }
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderDirectRow(row, idx) {
+    // Determine severity tone for the bar.
+    var sevClass = "sev-yellow";
+    if (row.latestActionType === "HC Call: Did Not Resolve") sevClass = "sev-red";
+
+    var html = '<div class="action-row ' + sevClass + '" data-direct-idx="' + idx + '">';
+    html += '<div class="severity-bar"></div>';
+    html += '<div class="action-meta">';
+    html += '<div class="action-client">' + esc(row.client) + '</div>';
+    html += '<div class="action-detail">';
+    html += '<span class="pathway-tag">' + esc(row.pathwayLabel) + '</span>';
+    html += '<span class="action-type-tag">' + esc(row.contextLine) + '</span>';
+    html += '<span style="color:var(--text-faint); margin-left:8px; font-size:11px;">' + esc(row.coach) + '</span>';
+    html += '</div></div>';
+    html += '<div class="action-buttons">';
+    row.buttons.forEach(function (b, bi) {
+      var cls = b.primary ? "action-btn action-btn-primary" : "action-btn";
+      html += '<button class="' + cls + ' js-direct-btn" data-btn-idx="' + bi + '" type="button">' + esc(b.label) + '</button>';
+    });
     html += '</div></div>';
     return html;
   }
@@ -404,13 +437,14 @@
             b.disabled = true;
           });
           row.querySelector(".js-mark-sent-direct").textContent = "Logged ✓";
-        });
+        }, action.alreadyLogged === true);
       });
     });
 
     // "Mark sent" without opening the modal.
     document.querySelectorAll(".js-mark-sent-direct").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        if (btn.disabled) return;
         var row = btn.closest(".action-row");
         var gIdx = parseInt(row.getAttribute("data-coach-idx"), 10);
         var rIdx = parseInt(row.getAttribute("data-row-idx"), 10);
