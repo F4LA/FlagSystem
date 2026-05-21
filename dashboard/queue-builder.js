@@ -36,7 +36,28 @@
 (function (root) {
   "use strict";
 
-  // ---------- ISO week helpers ----------
+  // ---------- Week key helpers ----------
+  //
+  // Two distinct week concepts are used here:
+  //
+  //   queueWeek    = the most recently CLOSED Coaching Week (Thu–Wed).
+  //                  This is what the HC reviews on Thursday morning. It
+  //                  remains stable from Thursday 00:00 ET through the
+  //                  following Wednesday 23:59 ET.
+  //
+  //   completedWeek = the Coaching Week currently IN PROGRESS. HC actions
+  //                   logged during this window appear in "Completed This
+  //                   Week" so the HC can see the work they've done since
+  //                   opening the queue on Thursday.
+  //
+  // Both use CoachingWeek (Thu–Wed) format "YYYY-CW##", which is
+  // consistent with how the engine (pathway-engine.js + client-timeline.js)
+  // analyzes data.
+  //
+  // Legacy ISO week (YYYY-Www, Mon–Sun) is retained as `currentWeek` in
+  // the return value to preserve backward compatibility with anything
+  // downstream that may still expect it (e.g. actions-writer payloads
+  // and Tab2/3/4 references).
   function isoWeekKey(date) {
     var d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     var dayNum = d.getUTCDay() || 7;
@@ -44,6 +65,16 @@
     var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
     var weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
     return d.getUTCFullYear() + "-W" + (weekNum < 10 ? "0" + weekNum : weekNum);
+  }
+
+  function getCoachingWeekModule() {
+    if (!root.CoachingWeek) {
+      throw new Error(
+        "queue-builder.js: CoachingWeek module not loaded. " +
+        "Check that engine/coaching-week.js is included before this script."
+      );
+    }
+    return root.CoachingWeek;
   }
 
   // ---------- Pathway descriptor helpers ----------
@@ -290,6 +321,19 @@
   function build(states, hcActions, options) {
     var opts = options || {};
     var now = opts.now || new Date();
+    var CW = getCoachingWeekModule();
+
+    // The HC reviews the most recently CLOSED Coaching Week (Thu–Wed).
+    var queueWeek = CW.closedCoachingWeek(now);
+    var queueWeekRange = CW.coachingWeekRange(queueWeek);
+
+    // "Completed This Week" tracks HC actions logged during the Coaching
+    // Week currently in progress (Thu of this week through Wed of next).
+    var completedWeek = CW.currentCoachingWeek(now);
+    var completedWeekRange = CW.coachingWeekRange(completedWeek);
+
+    // Retained for backward compatibility with downstream consumers
+    // (Tab2/3/4, actions-writer payloads). Format: YYYY-Www (ISO Mon–Sun).
     var currentWeek = isoWeekKey(now);
 
     var coachActions = [];
@@ -333,11 +377,15 @@
       return a.client.localeCompare(b.client);
     });
 
-    // Completed this week.
+    // Completed this week. Filter by the Coaching Week currently in
+    // progress (Thu of this week through Wed of next), inclusive.
+    var completedStart = completedWeekRange.start.getTime();
+    var completedEnd = completedWeekRange.end.getTime();
     var completed = (hcActions || [])
       .filter(function (a) {
         if (!a.timestamp) return false;
-        return isoWeekKey(a.timestamp) === currentWeek;
+        var t = a.timestamp.getTime();
+        return t >= completedStart && t <= completedEnd;
       })
       .sort(function (a, b) {
         return (b.timestamp ? b.timestamp.getTime() : 0) -
@@ -345,7 +393,20 @@
       });
 
     return {
+      // Legacy field. Retained so Tab2/3/4 and actions-writer payloads
+      // continue working unchanged.
       currentWeek: currentWeek,
+
+      // Coaching Week the queue is analyzing (closed, Thu–Wed).
+      queueWeek: queueWeek,
+      queueWeekStart: queueWeekRange.start,
+      queueWeekEnd: queueWeekRange.end,
+
+      // Coaching Week currently in progress (used for Completed filter).
+      completedWeek: completedWeek,
+      completedWeekStart: completedWeekRange.start,
+      completedWeekEnd: completedWeekRange.end,
+
       coachGroups: coachGroups,
       totalCoachActions: coachActions.length,
       totalCoaches: coachGroups.length,
