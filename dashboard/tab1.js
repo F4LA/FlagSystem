@@ -31,28 +31,43 @@
       .replace(/'/g, "&#39;");
   }
 
-  // ---------- ISO week label ----------
-  function weekRangeLabel(weekKey) {
-    // weekKey: "YYYY-Www". Returns "May 5–11, 2026"
-    var m = /^(\d{4})-W(\d{2})$/.exec(weekKey || "");
-    if (!m) return weekKey || "";
-    var year = parseInt(m[1], 10);
-    var week = parseInt(m[2], 10);
-    // ISO week: Monday of week 1 is the Monday on or before Jan 4.
-    var jan4 = new Date(Date.UTC(year, 0, 4));
-    var jan4Day = jan4.getUTCDay() || 7;
-    var mondayWeek1 = new Date(jan4);
-    mondayWeek1.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
-    var monday = new Date(mondayWeek1);
-    monday.setUTCDate(mondayWeek1.getUTCDate() + (week - 1) * 7);
-    var sunday = new Date(monday);
-    sunday.setUTCDate(monday.getUTCDate() + 6);
-    var fmt = function (d) {
-      return d.toLocaleDateString("en-US", {
-        month: "short", day: "numeric", timeZone: "UTC"
-      });
-    };
-    return fmt(monday) + "–" + sunday.getUTCDate() + ", " + year;
+  // ---------- Coaching Week label ----------
+  //
+  // Formats a Coaching Week range (Thu–Wed) for display.
+  // Accepts the queueWeekStart and queueWeekEnd Date objects produced by
+  // queue-builder.js. Returns "May 14–20, 2026" or "Dec 31, 2026 – Jan 6, 2027"
+  // for month-crossing ranges.
+  function weekRangeLabel(startDate, endDate) {
+    if (!(startDate instanceof Date) || !(endDate instanceof Date)) {
+      return "";
+    }
+    var startMonth = startDate.toLocaleDateString("en-US", {
+      month: "short", timeZone: "America/New_York"
+    });
+    var endMonth = endDate.toLocaleDateString("en-US", {
+      month: "short", timeZone: "America/New_York"
+    });
+    var startDay = parseInt(startDate.toLocaleDateString("en-US", {
+      day: "numeric", timeZone: "America/New_York"
+    }), 10);
+    var endDay = parseInt(endDate.toLocaleDateString("en-US", {
+      day: "numeric", timeZone: "America/New_York"
+    }), 10);
+    var startYear = parseInt(startDate.toLocaleDateString("en-US", {
+      year: "numeric", timeZone: "America/New_York"
+    }), 10);
+    var endYear = parseInt(endDate.toLocaleDateString("en-US", {
+      year: "numeric", timeZone: "America/New_York"
+    }), 10);
+
+    if (startMonth === endMonth && startYear === endYear) {
+      return startMonth + " " + startDay + "–" + endDay + ", " + endYear;
+    }
+    if (startYear === endYear) {
+      return startMonth + " " + startDay + " – " + endMonth + " " + endDay + ", " + endYear;
+    }
+    return startMonth + " " + startDay + ", " + startYear +
+           " – " + endMonth + " " + endDay + ", " + endYear;
   }
 
   // ---------- Toast ----------
@@ -162,7 +177,7 @@
     root_.innerHTML = "";
     ctx = ctx || {};
 
-    var weekLabel = weekRangeLabel(queue.currentWeek);
+    var weekLabel = weekRangeLabel(queue.queueWeekStart, queue.queueWeekEnd);
 
     // Header + summary
     var totalDirect = queue.directActions.length;
@@ -171,8 +186,8 @@
     var html = "";
     html += '<div class="queue-header">';
     html += '<div>';
-    html += '<h1>FRIDAY ACTION QUEUE</h1>';
-    html += '<div class="week-label">' + esc(queue.currentWeek) + ' &middot; ' + esc(weekLabel) + '</div>';
+    html += '<h1>THURSDAY ACTION QUEUE</h1>';
+    html += '<div class="week-label">' + esc(queue.queueWeek) + ' &middot; ' + esc(weekLabel) + '</div>';
     html += '</div>';
     html += '</div>';
 
