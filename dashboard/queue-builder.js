@@ -345,6 +345,24 @@
       directActions = directActions.concat(collectDirectClientActions(s, hcActions));
     }
 
+    // Mark coach actions as alreadyLogged if a matching HC Action exists
+    // within the current Coaching Week in progress. Match criteria:
+    //   client + coach + actionType ("Slack: Warning" or "Slack: Notification")
+    //   AND timestamp within completedWeekRange.
+    // This is what persists the "Logged ✓" state across page refreshes.
+    var completedStartMs = completedWeekRange.start.getTime();
+    var completedEndMs = completedWeekRange.end.getTime();
+    coachActions.forEach(function (a) {
+      a.alreadyLogged = (hcActions || []).some(function (hca) {
+        if (!hca.timestamp) return false;
+        var t = hca.timestamp.getTime();
+        if (t < completedStartMs || t > completedEndMs) return false;
+        return hca.client === a.client &&
+               hca.coach === a.coach &&
+               hca.actionType === a.actionType;
+      });
+    });
+
     // Group coach actions by coach. Within group: Warnings before
     // Notifications, then alphabetic by client.
     var byCoach = Object.create(null);
