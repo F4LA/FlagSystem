@@ -135,7 +135,7 @@
 
   function formatNoteWeek(entry) {
     if (entry && entry.weekStart instanceof Date && !isNaN(entry.weekStart.getTime())) {
-      return "Semana de " + entry.weekStart.toLocaleDateString("es-MX", {
+      return "Week of " + entry.weekStart.toLocaleDateString("en-US", {
         month: "short", day: "numeric", timeZone: "America/New_York"
       });
     }
@@ -144,7 +144,7 @@
 
   function renderNotesHtml(notes, expanded) {
     if (!notes || notes.length === 0) {
-      return '<div class="slack-note-empty">Sin notas registradas.</div>';
+      return '<div class="slack-note-empty">No notes recorded.</div>';
     }
     var visible = expanded ? notes : notes.slice(0, 1);
     return visible.map(function (n) {
@@ -165,8 +165,8 @@
     if (notes.length > 1) {
       toggle.classList.remove("hidden");
       toggle.textContent = modalState.notesExpanded
-        ? "Ver solo la más reciente"
-        : "Ver últimas " + notes.length;
+        ? "Show most recent only"
+        : "Show last " + notes.length;
     } else {
       toggle.classList.add("hidden");
     }

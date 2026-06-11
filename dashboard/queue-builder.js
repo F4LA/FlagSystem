@@ -131,10 +131,19 @@
     var actives = flattenActivePathways(state);
     if (actives.length === 0) return null;
 
-    // Filter out pathways that are in Post-Red tracking. Those are HC
-    // domain, not coach-facing — they go to collectDirectClientActions.
+    // Per Overview v3.5 & SOP §2.1: once a client has ANY pathway in Post-Red,
+    // the HC manages them directly. They appear ONLY in Direct Client Actions,
+    // never in the coach Slack queue — sending the coach "ask for a call" while
+    // the HC is emailing the client directly is contradictory. So if any active
+    // pathway is in Post-Red, suppress the coach Slack for the whole client.
+    var inPostRed = actives.some(function (e) {
+      return e.colorReason === "post-red-tracking" ||
+             e.colorReason === "red-window-call-asked";
+    });
+    if (inPostRed) return null;
+
+    // Remaining pathways (none Post-Red after the guard above) are coach-facing.
     var coachFacing = actives.filter(function (e) {
-      // post-red-tracking and red-window-call-asked belong to Direct Client.
       return e.colorReason !== "post-red-tracking" &&
              e.colorReason !== "red-window-call-asked";
     });
@@ -314,17 +323,21 @@
 
     if (postRed.length === 0) return rows;
 
-    // Client-level chain position: the most recent action across ALL of the
-    // client's Post-Red pathways. Because the dashboard logs each button in
-    // lockstep across every pathway (see tab1.js wireDirectButtons), this
-    // single action represents where the whole client sits in the chain.
-    var latest = postRed
-      .map(function (p) { return latestActionFor(p.pathway, p.standard); })
-      .filter(Boolean)
+    // Client-level chain position: the most recent Post-Red CHAIN action
+    // (HC emails/calls, coach-call outcomes). Coach Slack actions ("Slack: …")
+    // and audit notes are NOT part of the HC chain and must be ignored —
+    // otherwise a client whose only logged action is the coach "Slack: Warning"
+    // resolves to no actionable button at all. With them excluded, a fresh
+    // Post-Red client correctly falls back to the first step
+    // ("HC action pending" → "Mark HC email sent").
+    var latest = (clientActions || [])
+      .filter(function (a) {
+        return a && a.timestamp && a.actionType &&
+               a.actionType.indexOf("Slack:") !== 0 &&
+               a.actionType.indexOf("Coach Audit Note") !== 0;
+      })
       .sort(function (a, b) {
-        var ta = a.timestamp ? a.timestamp.getTime() : 0;
-        var tb = b.timestamp ? b.timestamp.getTime() : 0;
-        return tb - ta;
+        return b.timestamp.getTime() - a.timestamp.getTime();
       })[0] || null;
 
     var pathwayLabel = postRed.map(function (p) {
