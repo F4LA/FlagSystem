@@ -709,6 +709,65 @@ button { font-family: inherit; }
   #slack-modal-backdrop .modal-textarea { min-height: 220px; }
 }
 
+/* ---------- Situation brief modal (Direct Client Actions) ---------- */
+.brief-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 16px;
+  letter-spacing: 0.02em;
+}
+.brief-section { margin-bottom: 20px; }
+.brief-section:last-child { margin-bottom: 0; }
+.brief-section h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+.brief-line {
+  font-size: 13.5px;
+  line-height: 1.55;
+  margin-bottom: 4px;
+}
+.brief-weeks {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.brief-week-line {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+.brief-note {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 10px;
+  margin-bottom: 10px;
+}
+.brief-note:last-child { margin-bottom: 0; }
+.brief-note-week {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+  letter-spacing: 0.02em;
+}
+.brief-note-text {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.brief-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 13px;
+}
+
 /* ---------- Toast ---------- */
 .toast-container {
   position: fixed;

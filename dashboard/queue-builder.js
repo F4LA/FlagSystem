@@ -286,34 +286,66 @@
       return latest.actionType;
     }
 
-    function emitRow(pathwayCode, standard, label) {
-      var latest = latestActionFor(pathwayCode, standard);
-      rows.push({
-        kind: "direct-client",
-        client: state.clientName,
-        coach: state.coach,
-        pathway: pathwayCode,
-        standard: standard || null,
-        pathwayLabel: label,
-        contextLine: describeContext(latest),
-        buttons: buttonsForLatest(latest),
-        latestActionType: latest ? latest.actionType : null
-      });
+    function postRedActive(entry) {
+      return entry && (entry.colorReason === "post-red-tracking" ||
+                       entry.colorReason === "red-window-call-asked");
     }
 
-    if (ps.p1 && (ps.p1.colorReason === "post-red-tracking" || ps.p1.colorReason === "red-window-call-asked")) {
-      emitRow("P1", null, "P1");
+    // Collect EVERY Post-Red pathway for this client into ONE consolidated
+    // row. The HC manages the client directly (one support email covers the
+    // whole person), not each pathway separately. See SOP §2.2 / TDD §5.1.
+    var postRed = [];
+    if (postRedActive(ps.p1)) {
+      postRed.push({ pathway: "P1", standard: null, label: "P1",
+                     streakLength: ps.p1.streakLength || 0 });
     }
     (ps.p2 || []).forEach(function (p2) {
-      if (p2.colorReason === "post-red-tracking" || p2.colorReason === "red-window-call-asked") {
+      if (postRedActive(p2)) {
         var short = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
         var s = short[p2.standard] || p2.standard;
-        emitRow("P2", p2.standard, "P2 " + s);
+        postRed.push({ pathway: "P2", standard: p2.standard, label: "P2 " + s,
+                       streakLength: p2.streakLength || 0 });
       }
     });
-    if (ps.p3 && (ps.p3.colorReason === "post-red-tracking" || ps.p3.colorReason === "red-window-call-asked")) {
-      emitRow("P3", null, "P3");
+    if (postRedActive(ps.p3)) {
+      postRed.push({ pathway: "P3", standard: null, label: "P3",
+                     streakLength: ps.p3.streakLength || 0 });
     }
+
+    if (postRed.length === 0) return rows;
+
+    // Client-level chain position: the most recent action across ALL of the
+    // client's Post-Red pathways. Because the dashboard logs each button in
+    // lockstep across every pathway (see tab1.js wireDirectButtons), this
+    // single action represents where the whole client sits in the chain.
+    var latest = postRed
+      .map(function (p) { return latestActionFor(p.pathway, p.standard); })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        var ta = a.timestamp ? a.timestamp.getTime() : 0;
+        var tb = b.timestamp ? b.timestamp.getTime() : 0;
+        return tb - ta;
+      })[0] || null;
+
+    var pathwayLabel = postRed.map(function (p) {
+      return p.label + (p.streakLength ? " (" + p.streakLength + "w)" : "");
+    }).join(" · ");
+
+    rows.push({
+      kind: "direct-client",
+      client: state.clientName,
+      coach: state.coach,
+      // Primary pathway kept for backward-compat with any single-pathway
+      // consumer; the full set lives in `pathways`.
+      pathway: postRed[0].pathway,
+      standard: postRed[0].standard,
+      pathways: postRed,            // all Post-Red pathways (fan-out + brief)
+      pathwayLabel: pathwayLabel,
+      contextLine: describeContext(latest),
+      buttons: buttonsForLatest(latest),
+      latestActionType: latest ? latest.actionType : null,
+      clientActions: clientActions  // full HC action history for the brief
+    });
     return rows;
   }
 

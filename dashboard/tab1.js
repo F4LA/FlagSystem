@@ -172,6 +172,200 @@
     }
   }
 
+  // ---------- Situation brief (Direct Client Actions) ----------
+  //
+  // Deterministic, read-only summary so the HC understands a Post-Red client
+  // before writing the support email: what's failing (plain language), what's
+  // already happened (chain history), and the coach's notes verbatim. No AI —
+  // facts are templated, coach notes are shown exactly as written.
+
+  function shortStandard(name) {
+    var m = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
+    return m[name] || name || "";
+  }
+
+  function getClientTimeline(clientName) {
+    if (!root.ClientTimeline || typeof root.ClientTimeline.buildClientTimeline !== "function") {
+      return [];
+    }
+    try {
+      return root.ClientTimeline.buildClientTimeline(
+        clientName, currentFormResponses, { lookbackWeeks: NOTE_LOOKBACK_WEEKS }
+      );
+    } catch (err) {
+      return [];
+    }
+  }
+
+  function weekLabelShort(wr) {
+    if (wr && wr.weekStart instanceof Date && !isNaN(wr.weekStart.getTime())) {
+      return wr.weekStart.toLocaleDateString("en-US", {
+        month: "short", day: "numeric", timeZone: "America/New_York"
+      });
+    }
+    return (wr && wr.weekId) ? wr.weekId : "";
+  }
+
+  // Plain-language one-liner per pathway.
+  function pathwaySummaryLines(pathways) {
+    return (pathways || []).map(function (p) {
+      var n = p.streakLength || 0;
+      if (p.pathway === "P1") {
+        return "Had an acute crisis week — multiple standards failed at once.";
+      }
+      if (p.pathway === "P2") {
+        return "Has missed " + shortStandard(p.standard) + " " + n +
+               " week" + (n === 1 ? "" : "s") + " in a row.";
+      }
+      if (p.pathway === "P3") {
+        return "Broadly inconsistent " + n + " week" + (n === 1 ? "" : "s") +
+               " straight — different things slipping, no clean week.";
+      }
+      return p.label || p.pathway;
+    });
+  }
+
+  // Plain-language status of a single week.
+  function describeWeekPlain(wr) {
+    if (!wr) return "";
+    if (wr.status === "missing") return "No submission";
+    if (wr.status === "exempt") return "Exempt";
+    var failed = wr.failedStandards || [];
+    if ((wr.points || 0) === 0 && failed.length === 0) return "Clean week ✓";
+    var names = failed.map(shortStandard);
+    return "Failed " + names.join(", ") +
+           " (" + (wr.points || 0) + " pt" + ((wr.points || 0) === 1 ? "" : "s") + ")";
+  }
+
+  // Map HC Action types → plain sentences for the "what's happened" trail.
+  var ACTION_PLAIN = {
+    "Slack: Notification": "Coach was notified to call out the issue on the next check-in.",
+    "Slack: Warning": "Coach was told to ask the client for a direct call.",
+    "Slack: Acknowledgment": "Coach was acknowledged for the client's improvement.",
+    "Coach Call Outcome: Resolved": "Coach's call resolved the issue.",
+    "Coach Call Outcome: Did Not Resolve": "Coach's call happened but did not resolve it.",
+    "Coach Call Outcome: Client No Response": "Client did not respond to the coach's call request.",
+    "Coach Call Outcome: Client Declined": "Client declined the coach's call.",
+    "HC Email: Sent": "You (HC) emailed the client directly.",
+    "HC Email: Follow-up": "You sent a follow-up email.",
+    "HC Call: Scheduled": "HC call was scheduled.",
+    "HC Call: Resolved": "HC call resolved the issue.",
+    "HC Call: Did Not Resolve": "HC call happened but did not resolve it.",
+    "Black Flag: Triggered": "Black Flag was triggered.",
+    "Black Flag: Removed": "Black Flag was removed.",
+    "Manual Override: Black Flag Removed": "Black Flag removed by manual override."
+  };
+
+  function buildHistoryLines(clientActions) {
+    var sorted = (clientActions || [])
+      .filter(function (a) { return a && a.timestamp; })
+      .slice()
+      .sort(function (a, b) { return a.timestamp.getTime() - b.timestamp.getTime(); });
+    var seen = {};
+    var lines = [];
+    sorted.forEach(function (a) {
+      var dateStr = a.timestamp.toLocaleDateString("en-US", {
+        month: "short", day: "numeric", timeZone: "America/New_York"
+      });
+      // Dedupe the lockstep fan-out: one click logs the same action+date
+      // against several pathways; show it to the HC only once.
+      var key = dateStr + "|" + a.actionType;
+      if (seen[key]) return;
+      seen[key] = true;
+      lines.push(dateStr + " — " + (ACTION_PLAIN[a.actionType] || a.actionType));
+    });
+    return lines;
+  }
+
+  function buildBriefHtml(directRow) {
+    var html = "";
+    html += '<div class="brief-meta">' + esc(directRow.client) +
+            ' &middot; Coach: ' + esc(directRow.coach || "Unassigned") + '</div>';
+
+    // Section 1 — what's going wrong
+    html += '<div class="brief-section"><h3>What’s going wrong</h3>';
+    var sum = pathwaySummaryLines(directRow.pathways);
+    if (sum.length) {
+      sum.forEach(function (l) { html += '<div class="brief-line">• ' + esc(l) + '</div>'; });
+    } else {
+      html += '<div class="brief-empty">No active pathways.</div>';
+    }
+    var timeline = getClientTimeline(directRow.client);
+    var recent = timeline.slice(-6).reverse(); // last 6 weeks, newest first
+    if (recent.length) {
+      html += '<div class="brief-weeks">';
+      recent.forEach(function (wr) {
+        html += '<div class="brief-week-line">' + esc(weekLabelShort(wr)) + ': ' +
+                esc(describeWeekPlain(wr)) + '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Section 2 — what's happened so far
+    html += '<div class="brief-section"><h3>What’s happened so far</h3>';
+    var hist = buildHistoryLines(directRow.clientActions);
+    if (hist.length) {
+      hist.forEach(function (l) { html += '<div class="brief-line">• ' + esc(l) + '</div>'; });
+    } else {
+      html += '<div class="brief-empty">No HC actions logged yet — this is the first touch.</div>';
+    }
+    html += '</div>';
+
+    // Section 3 — coach notes (verbatim)
+    html += '<div class="brief-section"><h3>Coach notes (exact)</h3>';
+    var notes = getRecentNotes(directRow.client, 5);
+    if (notes.length) {
+      notes.forEach(function (n) {
+        html += '<div class="brief-note"><span class="brief-note-week">' +
+                esc(formatNoteWeek(n)) + '</span><div class="brief-note-text">' +
+                esc(n.notes) + '</div></div>';
+      });
+    } else {
+      html += '<div class="brief-empty">No coach notes recorded.</div>';
+    }
+    html += '</div>';
+
+    return html;
+  }
+
+  function openBriefModal(directRow) {
+    var body = document.getElementById("brief-modal-body");
+    if (!body) return;
+    body.innerHTML = buildBriefHtml(directRow);
+    document.getElementById("brief-modal-backdrop").classList.remove("hidden");
+  }
+
+  function closeBriefModal() {
+    var bd = document.getElementById("brief-modal-backdrop");
+    if (bd) bd.classList.add("hidden");
+  }
+
+  function wireBriefModal() {
+    var close = document.getElementById("brief-modal-close");
+    if (close) close.addEventListener("click", closeBriefModal);
+    var bd = document.getElementById("brief-modal-backdrop");
+    if (bd) {
+      bd.addEventListener("click", function (e) {
+        if (e.target.id === "brief-modal-backdrop") closeBriefModal();
+      });
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeBriefModal();
+    });
+  }
+
+  function wireBriefButtons(queue) {
+    document.querySelectorAll(".js-brief-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".action-row");
+        var idx = parseInt(row.getAttribute("data-direct-idx"), 10);
+        var directRow = queue.directActions[idx];
+        if (directRow) openBriefModal(directRow);
+      });
+    });
+  }
+
   // ---------- Modal ----------
   var modalState = {
     open: false,
@@ -361,6 +555,7 @@
     wireCompletedToggle();
     wireSlackButtons(queue);
     wireDirectButtons(queue, ctx);
+    wireBriefButtons(queue);
   }
 
   function statBox(value, label) {
@@ -437,29 +632,9 @@
     html += '<span style="color:var(--text-faint); margin-left:8px; font-size:11px;">' + esc(row.coach) + '</span>';
     html += '</div></div>';
     html += '<div class="action-buttons">';
-    row.buttons.forEach(function (b, bi) {
-      var cls = b.primary ? "action-btn action-btn-primary" : "action-btn";
-      html += '<button class="' + cls + ' js-direct-btn" data-btn-idx="' + bi + '" type="button">' + esc(b.label) + '</button>';
-    });
-    html += '</div></div>';
-    return html;
-  }
-
-  function renderDirectRow(row, idx) {
-    // Determine severity tone for the bar.
-    var sevClass = "sev-yellow";
-    if (row.latestActionType === "HC Call: Did Not Resolve") sevClass = "sev-red";
-
-    var html = '<div class="action-row ' + sevClass + '" data-direct-idx="' + idx + '">';
-    html += '<div class="severity-bar"></div>';
-    html += '<div class="action-meta">';
-    html += '<div class="action-client">' + esc(row.client) + '</div>';
-    html += '<div class="action-detail">';
-    html += '<span class="pathway-tag">' + esc(row.pathwayLabel) + '</span>';
-    html += '<span class="action-type-tag">' + esc(row.contextLine) + '</span>';
-    html += '<span style="color:var(--text-faint); margin-left:8px; font-size:11px;">' + esc(row.coach) + '</span>';
-    html += '</div></div>';
-    html += '<div class="action-buttons">';
+    // "Situation" opens the deterministic brief. Not a .js-direct-btn, so it
+    // stays clickable even after the chain buttons are disabled/logged.
+    html += '<button class="action-btn js-brief-btn" type="button">Situation</button>';
     row.buttons.forEach(function (b, bi) {
       var cls = b.primary ? "action-btn action-btn-primary" : "action-btn";
       html += '<button class="' + cls + ' js-direct-btn" data-btn-idx="' + bi + '" type="button">' + esc(b.label) + '</button>';
@@ -604,31 +779,44 @@
           d.setDate(d.getDate() + 3);
           followUpDate = d.toISOString();
         }
-        var payload = {
-          client: directRow.client,
-          coach: directRow.coach,
-          pathway: directRow.pathway,
-          standard: directRow.standard,
-          actionType: btnSpec.actionType,
-          notes: null,
-          outcome: null,
-          followUpDueDate: followUpDate,
-          actionWeek: queue.currentWeek
-        };
+
+        // Lockstep fan-out: log this action against EVERY Post-Red pathway for
+        // the client, so the engine (which tracks Post-Red per pathway) moves
+        // them all together. One HC click = one real-world action covering the
+        // whole client. This writes the exact same per-pathway rows the HC
+        // would have logged one by one before consolidation.
+        var pathways = (directRow.pathways && directRow.pathways.length)
+          ? directRow.pathways
+          : [{ pathway: directRow.pathway || "Post-Red", standard: directRow.standard || null }];
+
+        var payloads = pathways.map(function (p) {
+          return {
+            client: directRow.client,
+            coach: directRow.coach,
+            pathway: p.pathway,
+            standard: p.standard || null,
+            actionType: btnSpec.actionType,
+            notes: null,
+            outcome: null,
+            followUpDueDate: followUpDate,
+            actionWeek: queue.currentWeek
+          };
+        });
 
         var originalLabel = btn.textContent;
-        btn.disabled = true;
         btn.textContent = "Logging…";
-        // Disable sibling buttons too so HC doesn't double-log.
-        row.querySelectorAll(".action-btn").forEach(function (b) { b.disabled = true; });
+        // Disable only the chain buttons (not "Situation") so HC doesn't
+        // double-log but can still re-open the brief.
+        row.querySelectorAll(".js-direct-btn").forEach(function (b) { b.disabled = true; });
 
-        root.ActionsWriter.logAction(payload)
+        Promise.all(payloads.map(function (p) { return root.ActionsWriter.logAction(p); }))
           .then(function () {
-            toast("Logged: " + btnSpec.actionType, "success");
+            toast("Logged: " + btnSpec.actionType +
+              " (" + payloads.length + " pathway" + (payloads.length === 1 ? "" : "s") + ")", "success");
             btn.textContent = "Logged ✓";
           })
           .catch(function (err) {
-            row.querySelectorAll(".action-btn").forEach(function (b) { b.disabled = false; });
+            row.querySelectorAll(".js-direct-btn").forEach(function (b) { b.disabled = false; });
             btn.textContent = originalLabel;
             toast("Failed to log: " + err.message, "error");
           });
@@ -639,6 +827,7 @@
   // ---------- Init ----------
   function init() {
     wireModal();
+    wireBriefModal();
   }
 
   root.Tab1 = {
