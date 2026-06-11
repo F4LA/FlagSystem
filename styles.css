@@ -612,6 +612,16 @@ button { font-family: inherit; }
    .modal-textarea rules used by the Tab 3 "Add HC Note" modal are untouched. */
 #slack-modal-backdrop .modal.slack-modal {
   max-width: 1040px;
+  /* Promote the modal to its own compositing layer so the backdrop's
+     blur is cached. Without this, scrolling inside the message textarea
+     forces the full-screen blurred backdrop to re-rasterize every frame,
+     which is what made scrolling feel janky. */
+  transform: translateZ(0);
+}
+/* Only the two inner columns scroll; the body itself does not. This removes
+   the competing nested scroll container that fought with the textarea. */
+.slack-modal-body {
+  overflow: hidden;
 }
 .slack-modal-cols {
   display: grid;
@@ -654,6 +664,7 @@ button { font-family: inherit; }
   min-height: 360px;
   max-height: 56vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px 14px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -667,6 +678,7 @@ button { font-family: inherit; }
   min-height: 360px;
   max-height: 56vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* One note entry inside the note column. */
 .slack-note-entry + .slack-note-entry {
