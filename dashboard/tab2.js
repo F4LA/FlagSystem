@@ -359,11 +359,33 @@
     html += '</div>';
 
     html += renderFilterBar(allCoaches, totalCount, visible.length);
+    // Table lives in a stable wrapper so the search box can refresh just the
+    // rows without rebuilding (and thus stealing focus from) the input.
+    html += '<div id="roster-table-wrap">';
     html += renderTable(visible, hcActions, ctx.currentWeek);
+    html += '</div>';
 
     rootEl.innerHTML = html;
 
     wireFilters(states, hcActions, ctx);
+    wireRows(states, hcActions, ctx);
+  }
+
+  // Refresh only the table + count, leaving the filter bar (and the focused
+  // search input) intact. Used by the search box so typing isn't interrupted.
+  function updateTableOnly(states, hcActions, ctx) {
+    var wrap = document.getElementById("roster-table-wrap");
+    if (!wrap) {
+      // Fallback: wrapper missing for some reason — do a full render.
+      render(states, hcActions, ctx);
+      return;
+    }
+    var visible = states.filter(passesFilters).sort(compareStates);
+    wrap.innerHTML = renderTable(visible, hcActions, ctx.currentWeek);
+    var countEl = document.querySelector("#roster-content .roster-count");
+    if (countEl) {
+      countEl.textContent = visible.length + " of " + states.length + " clients";
+    }
     wireRows(states, hcActions, ctx);
   }
 
@@ -385,11 +407,12 @@
 
     var searchInput = document.getElementById("roster-search");
     if (searchInput) {
-      var debounceTimer = null;
       searchInput.addEventListener("input", function (e) {
         filters.search = e.target.value;
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(rerender, 120);
+        // Update only the table so the input keeps focus and the caret — a
+        // full rerender here recreated the input and dropped focus after one
+        // keystroke. No debounce needed since we no longer rebuild the input.
+        updateTableOnly(states, hcActions, ctx);
       });
     }
 
