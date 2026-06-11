@@ -82,8 +82,9 @@
         state.lastStates = states;
         state.lastQueue = queue;
 
-        // Tab 1 (existing).
-        window.Tab1.render(queue);
+        // Tab 1 (existing). Pass formResponses so the Slack modal can show
+        // the client's most-recent coach note(s) alongside the message.
+        window.Tab1.render(queue, { formResponses: data.formResponses });
 
         // Tabs 2/3/4 (v1.1). Shared context.
         var sharedCtx = {

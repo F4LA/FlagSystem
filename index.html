@@ -63,14 +63,28 @@
 
   <!-- Slack modal (Tab 1) -->
   <div class="modal-backdrop hidden" id="slack-modal-backdrop">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal slack-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <header class="modal-header">
         <h2 id="modal-title">Generate Slack Message</h2>
         <button class="modal-close" type="button" id="modal-close" aria-label="Close">×</button>
       </header>
-      <div class="modal-body">
+      <div class="modal-body slack-modal-body">
         <p class="modal-meta" id="modal-meta"></p>
-        <textarea class="modal-textarea" id="modal-textarea" rows="10" spellcheck="false"></textarea>
+        <div class="slack-modal-cols">
+          <div class="slack-col slack-note-col">
+            <div class="slack-col-header">
+              <span class="slack-col-title">Nota del coach</span>
+              <button class="slack-note-toggle hidden" type="button" id="modal-note-toggle"></button>
+            </div>
+            <div class="slack-note-body" id="modal-note-body"></div>
+          </div>
+          <div class="slack-col slack-msg-col">
+            <div class="slack-col-header">
+              <span class="slack-col-title">Mensaje generado</span>
+            </div>
+            <textarea class="modal-textarea" id="modal-textarea" rows="10" spellcheck="false"></textarea>
+          </div>
+        </div>
       </div>
       <footer class="modal-footer">
         <button class="btn btn-secondary" type="button" id="modal-copy">

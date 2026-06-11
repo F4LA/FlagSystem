@@ -20,6 +20,16 @@
 (function (root) {
   "use strict";
 
+  // Raw form-response rows from the most recent load. Set in render() via
+  // ctx.formResponses so the Slack modal can rebuild a client's timeline and
+  // surface their most-recent coach note(s). Engine is only READ here (via
+  // ClientTimeline.buildClientTimeline), never modified.
+  var currentFormResponses = [];
+
+  // Default lookback for the note timeline (matches FlagConfig.LOOKBACK_WEEKS).
+  var NOTE_LOOKBACK_WEEKS =
+    (root.FlagConfig && root.FlagConfig.LOOKBACK_WEEKS) || 16;
+
   // ---------- HTML escape ----------
   function esc(s) {
     if (s === null || s === undefined) return "";
@@ -85,17 +95,99 @@
     }, 3500);
   }
 
+  // ---------- Coach notes ----------
+  //
+  // Rebuild the client's timeline (read-only call into the engine) and pull
+  // the most recent weeks that carry a free-text coach note ("Additional
+  // notes", column H of Form Responses → wr.notes). Returns newest-first,
+  // capped at `limit` entries.
+  function getRecentNotes(clientName, limit) {
+    limit = limit || 3;
+    if (!root.ClientTimeline || typeof root.ClientTimeline.buildClientTimeline !== "function") {
+      return [];
+    }
+    var timeline;
+    try {
+      timeline = root.ClientTimeline.buildClientTimeline(
+        clientName,
+        currentFormResponses,
+        { lookbackWeeks: NOTE_LOOKBACK_WEEKS }
+      );
+    } catch (err) {
+      if (root.console && root.console.warn) {
+        root.console.warn("Tab1.getRecentNotes: timeline build failed for " +
+          clientName + ": " + err.message);
+      }
+      return [];
+    }
+
+    var withNotes = [];
+    // Timeline is oldest-first; walk backwards to collect newest notes first.
+    for (var i = timeline.length - 1; i >= 0 && withNotes.length < limit; i--) {
+      var wr = timeline[i];
+      var note = wr && wr.notes ? String(wr.notes).trim() : "";
+      if (note) {
+        withNotes.push({ weekId: wr.weekId, weekStart: wr.weekStart, notes: note });
+      }
+    }
+    return withNotes;
+  }
+
+  function formatNoteWeek(entry) {
+    if (entry && entry.weekStart instanceof Date && !isNaN(entry.weekStart.getTime())) {
+      return "Semana de " + entry.weekStart.toLocaleDateString("es-MX", {
+        month: "short", day: "numeric", timeZone: "America/New_York"
+      });
+    }
+    return entry && entry.weekId ? entry.weekId : "";
+  }
+
+  function renderNotesHtml(notes, expanded) {
+    if (!notes || notes.length === 0) {
+      return '<div class="slack-note-empty">Sin notas registradas.</div>';
+    }
+    var visible = expanded ? notes : notes.slice(0, 1);
+    return visible.map(function (n) {
+      return '<div class="slack-note-entry">' +
+        '<span class="slack-note-week">' + esc(formatNoteWeek(n)) + '</span>' +
+        '<div class="slack-note-text">' + esc(n.notes) + '</div>' +
+        '</div>';
+    }).join("");
+  }
+
+  // Populate the note column from modalState and wire the expand toggle label.
+  function renderNoteColumn() {
+    var body = document.getElementById("modal-note-body");
+    var toggle = document.getElementById("modal-note-toggle");
+    if (!body || !toggle) return;
+    var notes = modalState.notes || [];
+    body.innerHTML = renderNotesHtml(notes, modalState.notesExpanded);
+    if (notes.length > 1) {
+      toggle.classList.remove("hidden");
+      toggle.textContent = modalState.notesExpanded
+        ? "Ver solo la más reciente"
+        : "Ver últimas " + notes.length;
+    } else {
+      toggle.classList.add("hidden");
+    }
+  }
+
   // ---------- Modal ----------
   var modalState = {
     open: false,
     payload: null,        // the action payload to send on "Mark sent"
-    onSent: null          // callback to disable the originating button
+    onSent: null,         // callback to disable the originating button
+    notes: [],            // recent coach notes for the current client
+    notesExpanded: false  // whether the note column shows all (up to 3)
   };
 
-  function openSlackModal(payload, slackText, metaLine, onSent, alreadyLogged) {
+  function openSlackModal(payload, slackText, metaLine, onSent, alreadyLogged, notes) {
     modalState.open = true;
     modalState.payload = payload;
     modalState.onSent = onSent;
+    modalState.notes = notes || [];
+    modalState.notesExpanded = false;
+    renderNoteColumn();
 
     document.getElementById("modal-meta").textContent = metaLine;
     var ta = document.getElementById("modal-textarea");
@@ -120,6 +212,8 @@
     modalState.open = false;
     modalState.payload = null;
     modalState.onSent = null;
+    modalState.notes = [];
+    modalState.notesExpanded = false;
   }
 
   function wireModal() {
@@ -130,6 +224,14 @@
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && modalState.open) closeModal();
     });
+
+    var noteToggle = document.getElementById("modal-note-toggle");
+    if (noteToggle) {
+      noteToggle.addEventListener("click", function () {
+        modalState.notesExpanded = !modalState.notesExpanded;
+        renderNoteColumn();
+      });
+    }
 
     document.getElementById("modal-copy").addEventListener("click", function () {
       var ta = document.getElementById("modal-textarea");
@@ -182,6 +284,9 @@
     if (!root_) return;
     root_.innerHTML = "";
     ctx = ctx || {};
+
+    // Cache raw form responses so the Slack modal can surface coach notes.
+    if (ctx.formResponses) currentFormResponses = ctx.formResponses;
 
     var weekLabel = weekRangeLabel(queue.queueWeekStart, queue.queueWeekEnd);
 
@@ -432,12 +537,14 @@
           actionWeek: queue.currentWeek
         };
 
+        var notes = getRecentNotes(action.client, 3);
+
         openSlackModal(payload, msg.text, meta, function () {
           row.querySelectorAll(".action-btn").forEach(function (b) {
             b.disabled = true;
           });
           row.querySelector(".js-mark-sent-direct").textContent = "Logged ✓";
-        }, action.alreadyLogged === true);
+        }, action.alreadyLogged === true, notes);
       });
     });
 

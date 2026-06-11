@@ -607,6 +607,96 @@ button { font-family: inherit; }
   background: var(--steel-400);
 }
 
+/* ---------- Slack modal: two-column layout (note + message) ---------- */
+/* Scoped to #slack-modal-backdrop so the shared .modal / .modal-body /
+   .modal-textarea rules used by the Tab 3 "Add HC Note" modal are untouched. */
+#slack-modal-backdrop .modal.slack-modal {
+  max-width: 1040px;
+}
+.slack-modal-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  align-items: stretch;
+}
+.slack-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.slack-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 22px;
+}
+.slack-col-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.slack-note-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--steel-600);
+  cursor: pointer;
+}
+.slack-note-toggle:hover { color: var(--steel-400); text-decoration: underline; }
+.slack-note-body {
+  flex: 1;
+  min-height: 360px;
+  max-height: 56vh;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+/* Give the message textarea a comfortable reading height to match the note column. */
+#slack-modal-backdrop .modal-textarea {
+  min-height: 360px;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+/* One note entry inside the note column. */
+.slack-note-entry + .slack-note-entry {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.slack-note-week {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  letter-spacing: 0.02em;
+}
+.slack-note-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.slack-note-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+/* Stack columns on narrow viewports. */
+@media (max-width: 720px) {
+  .slack-modal-cols { grid-template-columns: 1fr; }
+  .slack-note-body { min-height: 160px; max-height: 32vh; }
+  #slack-modal-backdrop .modal-textarea { min-height: 220px; }
+}
+
 /* ---------- Toast ---------- */
 .toast-container {
   position: fixed;
