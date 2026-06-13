@@ -185,6 +185,9 @@
     if (clientState.evaluatedAtWeek) {
       html += '<span class="pd-eval-week">Evaluated at ' + esc(clientState.evaluatedAtWeek) + '</span>';
     }
+    // Optional coach acknowledgment (Overview Outcome 1): copy a "client is
+    // improving / good work" Slack for the coach. HC's judgment when to use it.
+    html += '<button type="button" class="action-btn" id="pd-ack-btn">Copy acknowledgment for coach</button>';
     html += '</div>';
     html += '</div>';
     return html;
@@ -483,6 +486,38 @@
     });
   }
 
+  // Copy a coach acknowledgment Slack for the current client to the clipboard.
+  function wireAcknowledge() {
+    var btn = document.getElementById("pd-ack-btn");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      var cs = findState(state.clientName, state.ctx && state.ctx.states);
+      if (!cs || !root.SlackTemplates || typeof root.SlackTemplates.acknowledgment !== "function") {
+        btn.textContent = "Template unavailable";
+        return;
+      }
+      var msg = root.SlackTemplates.acknowledgment(cs.clientName);
+      var text = (msg && msg.text) ? msg.text : "";
+      var ok = false;
+      try {
+        if (root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText) {
+          root.navigator.clipboard.writeText(text);
+          ok = true;
+        } else {
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+        }
+      } catch (e) { ok = false; }
+      var orig = "Copy acknowledgment for coach";
+      btn.textContent = ok ? "Copied ✓ — paste in coach's DM" : "Copy failed";
+      setTimeout(function () { btn.textContent = orig; }, 2200);
+    });
+  }
+
   // ---------- Render to DOM ----------
   function renderModalBody() {
     if (!state.open || !state.clientName || !state.ctx) return;
@@ -499,6 +534,7 @@
     body.innerHTML = rendered.html;
     wireWeekCells(rendered.timeline);
     wireToggleHistory();
+    wireAcknowledge();
   }
 
   // ---------- Hash linking ----------
