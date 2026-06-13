@@ -768,6 +768,19 @@ button { font-family: inherit; }
   font-size: 13px;
 }
 
+/* ---------- Direct Client Actions: parked (Post-Red grace) ---------- */
+.action-row.is-parked {
+  opacity: 0.6;
+}
+.action-row.is-parked .action-client {
+  font-weight: 500;
+}
+.action-type-tag.parked-tag {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
 /* ---------- Toast ---------- */
 .toast-container {
   position: fixed;

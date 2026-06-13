@@ -618,27 +618,43 @@
   }
 
   function renderDirectRow(row, idx) {
+    var parked = !!(row.park && row.park.parked);
+
     // Determine severity tone for the bar.
     var sevClass = "sev-yellow";
     if (row.latestActionType === "HC Call: Did Not Resolve") sevClass = "sev-red";
 
-    var html = '<div class="action-row ' + sevClass + '" data-direct-idx="' + idx + '">';
+    var html = '<div class="action-row ' + sevClass + (parked ? " is-parked" : "") +
+               '" data-direct-idx="' + idx + '">';
     html += '<div class="severity-bar"></div>';
     html += '<div class="action-meta">';
     html += '<div class="action-client">' + esc(row.client) + '</div>';
     html += '<div class="action-detail">';
     html += '<span class="pathway-tag">' + esc(row.pathwayLabel) + '</span>';
-    html += '<span class="action-type-tag">' + esc(row.contextLine) + '</span>';
+    if (parked) {
+      // Visible-but-parked: show the reason, suppress the email prompt.
+      html += '<span class="action-type-tag parked-tag">⏸ Parked</span>';
+      if (row.park.note) {
+        html += '<span style="color:var(--text-muted); margin-left:8px; font-size:11px;">' +
+                esc(row.park.note) + '</span>';
+      }
+    } else {
+      html += '<span class="action-type-tag">' + esc(row.contextLine) + '</span>';
+    }
     html += '<span style="color:var(--text-faint); margin-left:8px; font-size:11px;">' + esc(row.coach) + '</span>';
     html += '</div></div>';
     html += '<div class="action-buttons">';
     // "Situation" opens the deterministic brief. Not a .js-direct-btn, so it
     // stays clickable even after the chain buttons are disabled/logged.
     html += '<button class="action-btn js-brief-btn" type="button">Situation</button>';
-    row.buttons.forEach(function (b, bi) {
-      var cls = b.primary ? "action-btn action-btn-primary" : "action-btn";
-      html += '<button class="' + cls + ' js-direct-btn" data-btn-idx="' + bi + '" type="button">' + esc(b.label) + '</button>';
-    });
+    // While parked (coach call in its grace window), suppress the chain
+    // buttons — the email prompt returns automatically when grace ends.
+    if (!parked) {
+      row.buttons.forEach(function (b, bi) {
+        var cls = b.primary ? "action-btn action-btn-primary" : "action-btn";
+        html += '<button class="' + cls + ' js-direct-btn" data-btn-idx="' + bi + '" type="button">' + esc(b.label) + '</button>';
+      });
+    }
     html += '</div></div>';
     return html;
   }

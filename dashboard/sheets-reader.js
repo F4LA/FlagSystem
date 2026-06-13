@@ -74,8 +74,10 @@
     var out = [];
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i] || [];
-      // Pad to 8 columns so normalizeSubmission can index reliably.
-      while (r.length < 8) r.push("");
+      // Pad to 9 columns so indexing is reliable. Cols A–H (0–7) are consumed
+      // by the engine (normalizeSubmission); col I (8) = call scheduled date,
+      // read only by the dashboard's Post-Red grace logic.
+      while (r.length < 9) r.push("");
       // Drop rows without a timestamp + client.
       if (!r[0] || !r[1]) continue;
       out.push(r);

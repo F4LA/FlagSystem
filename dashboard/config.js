@@ -45,7 +45,9 @@
       //   F: loom link
       //   G: call requested
       //   H: notes
-      range: "'Form Responses 1'!A2:H"
+      //   I: call scheduled date (added Jun 2026; consumed only by the
+      //      dashboard's Post-Red grace logic — the engine ignores it).
+      range: "'Form Responses 1'!A2:I"
     },
     HC_ACTIONS: {
       sheetId: "1TmlmzNPi-BtLy1C4sizqJmvLFHAxyH6Glb9mWP3Vv64",

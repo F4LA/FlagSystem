@@ -212,8 +212,125 @@
     };
   }
 
+  // ---------- Post-Red grace / "park" computation ----------
+  //
+  // Decides whether a Post-Red client's HC-email prompt should be suppressed
+  // ("parked") this week. The client is NEVER hidden — callers render parked
+  // rows visibly (greyed), just without the email prompt. Design (agreed):
+  //   1. Manual HC override ("HC: Park" until a date) always wins.
+  //   2. Else, if the coach logged "Client accepted" + a call date (form col I):
+  //        - hold the email until the first EVALUABLE coaching week AFTER the
+  //          call date exists;
+  //        - then: a problem pathway still failing -> email (call didn't work);
+  //          clean -> stay parked (engine resolves to Green after 2 clean weeks);
+  //        - a pathway that went Red AFTER the call date -> new problem -> email.
+  //   3. Declined / no-response / escalated / no date -> not parked (email now).
+  // Engine is only READ here (ClientTimeline) — never modified.
+  var PARK_ACTION = "HC: Park";
+  var UNPARK_ACTION = "HC: Unpark";
+  var ACCEPTED_CALL = "Client accepted";
+
+  function qbParseDate(v) {
+    if (!v) return null;
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function qbSameClient(a, b) {
+    return String(a || "").toLowerCase().trim() === String(b || "").toLowerCase().trim();
+  }
+
+  function qbFmtDate(d) {
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
+  }
+
+  // One "fails this week" predicate per active Post-Red pathway.
+  function qbProblemPredicates(postRed) {
+    return (postRed || []).map(function (p) {
+      if (p.pathway === "P1") return function (wr) { return (wr.points || 0) >= 5; };
+      if (p.pathway === "P3") return function (wr) { return (wr.failedStandards || []).length > 0; };
+      var std = p.standard;
+      return function (wr) { return (wr.failedStandards || []).indexOf(std) !== -1; };
+    });
+  }
+
+  function computeParkState(state, postRed, formResponses, clientActions, now) {
+    now = now || new Date();
+
+    // 1. Manual override wins (latest Park/Unpark for the client).
+    var parkRows = (clientActions || []).filter(function (a) {
+      return a && a.timestamp && (a.actionType === PARK_ACTION || a.actionType === UNPARK_ACTION);
+    }).sort(function (a, b) { return a.timestamp.getTime() - b.timestamp.getTime(); });
+    var lastPark = parkRows[parkRows.length - 1];
+    if (lastPark && lastPark.actionType === PARK_ACTION) {
+      var until = qbParseDate(lastPark.followUpDueDate);
+      if (until && until.getTime() > now.getTime()) {
+        return { parked: true, until: until, reason: "manual", note: lastPark.notes || "" };
+      }
+    }
+
+    // 2. Auto-grace from the form call-date.
+    if (!Array.isArray(formResponses)) return { parked: false };
+    var subs = formResponses
+      .filter(function (r) { return r && r[0] && qbSameClient(r[1], state.clientName); })
+      .sort(function (a, b) {
+        var ta = qbParseDate(a[0]), tb = qbParseDate(b[0]);
+        return (tb ? tb.getTime() : 0) - (ta ? ta.getTime() : 0);
+      });
+    var callSub = null;
+    for (var i = 0; i < subs.length; i++) {
+      if (String(subs[i][6] || "").trim() !== "") { callSub = subs[i]; break; }
+    }
+    if (!callSub) return { parked: false };
+    var response = String(callSub[6]).trim();
+    var callDate = qbParseDate(callSub[8]); // col I (index 8) = call scheduled date
+    if (response !== ACCEPTED_CALL || !callDate) return { parked: false };
+
+    // A pathway whose streak began AFTER the call = new problem -> email.
+    for (var k = 0; k < (postRed || []).length; k++) {
+      var sw = postRed[k].streakWeeks || [];
+      var start = sw.length ? qbParseDate(sw[0].weekStart) : null;
+      if (start && start.getTime() > callDate.getTime()) {
+        return { parked: false };
+      }
+    }
+
+    // Inspect post-call EVALUABLE weeks via the engine timeline (read-only).
+    var timeline = [];
+    if (root.ClientTimeline && typeof root.ClientTimeline.buildClientTimeline === "function") {
+      try {
+        timeline = root.ClientTimeline.buildClientTimeline(state.clientName, formResponses, {
+          lookbackWeeks: (root.FlagConfig && root.FlagConfig.LOOKBACK_WEEKS) || 16,
+          currentDate: now
+        });
+      } catch (e) { timeline = []; }
+    }
+    var postCallEval = timeline.filter(function (wr) {
+      var ws = qbParseDate(wr.weekStart);
+      return ws && ws.getTime() > callDate.getTime() && wr.status === "evaluable";
+    });
+
+    // No evaluable post-call week yet -> keep giving the call a chance.
+    if (postCallEval.length === 0) {
+      return { parked: true, until: null, reason: "grace",
+               note: "Coach call accepted — scheduled " + qbFmtDate(callDate) };
+    }
+
+    // A problem pathway still fails in a post-call week -> email.
+    var preds = qbProblemPredicates(postRed);
+    var stillFailing = postCallEval.some(function (wr) {
+      return preds.some(function (pred) { return pred(wr); });
+    });
+    if (stillFailing) return { parked: false };
+
+    // Problem pathways clean post-call -> improving; engine will resolve to Green.
+    return { parked: true, until: null, reason: "improving",
+             note: "Improving since coach call (" + qbFmtDate(callDate) + ")" };
+  }
+
   // ---------- Direct Client Actions (Post-Red) ----------
-  function collectDirectClientActions(state, hcActions) {
+  function collectDirectClientActions(state, hcActions, formResponses, now) {
     var clientActions = (hcActions || []).filter(function (a) {
       return a.client && state.clientName &&
         a.client.toLowerCase().trim() === state.clientName.toLowerCase().trim();
@@ -306,19 +423,22 @@
     var postRed = [];
     if (postRedActive(ps.p1)) {
       postRed.push({ pathway: "P1", standard: null, label: "P1",
-                     streakLength: ps.p1.streakLength || 0 });
+                     streakLength: ps.p1.streakLength || 0,
+                     streakWeeks: ps.p1.streakWeeks || [] });
     }
     (ps.p2 || []).forEach(function (p2) {
       if (postRedActive(p2)) {
         var short = (root.FlagConfig && root.FlagConfig.STANDARD_SHORT_NAMES) || {};
         var s = short[p2.standard] || p2.standard;
         postRed.push({ pathway: "P2", standard: p2.standard, label: "P2 " + s,
-                       streakLength: p2.streakLength || 0 });
+                       streakLength: p2.streakLength || 0,
+                       streakWeeks: p2.streakWeeks || [] });
       }
     });
     if (postRedActive(ps.p3)) {
       postRed.push({ pathway: "P3", standard: null, label: "P3",
-                     streakLength: ps.p3.streakLength || 0 });
+                     streakLength: ps.p3.streakLength || 0,
+                     streakWeeks: ps.p3.streakWeeks || [] });
     }
 
     if (postRed.length === 0) return rows;
@@ -344,10 +464,14 @@
       return p.label + (p.streakLength ? " (" + p.streakLength + "w)" : "");
     }).join(" · ");
 
+    // Grace / park: should the HC-email prompt be suppressed this week?
+    var park = computeParkState(state, postRed, formResponses, clientActions, now);
+
     rows.push({
       kind: "direct-client",
       client: state.clientName,
       coach: state.coach,
+      park: park,                   // { parked, until, reason, note }
       // Primary pathway kept for backward-compat with any single-pathway
       // consumer; the full set lives in `pathways`.
       pathway: postRed[0].pathway,
@@ -387,7 +511,9 @@
       var s = states[i];
       var ca = buildClientAction(s);
       if (ca) coachActions.push(ca);
-      directActions = directActions.concat(collectDirectClientActions(s, hcActions));
+      directActions = directActions.concat(
+        collectDirectClientActions(s, hcActions, opts.formResponses, now)
+      );
     }
 
     // Mark coach actions as alreadyLogged if a matching HC Action exists
@@ -429,6 +555,10 @@
 
     // Direct client actions: severity-then-name.
     directActions.sort(function (a, b) {
+      // Parked (in-grace) clients sink to the bottom — visible but not nagging.
+      var pa = (a.park && a.park.parked) ? 1 : 0;
+      var pb = (b.park && b.park.parked) ? 1 : 0;
+      if (pa !== pb) return pa - pb;
       function urgency(row) {
         if (row.latestActionType === "HC Call: Did Not Resolve") return 0;
         if (row.latestActionType === "HC Call: Scheduled") return 1;
@@ -484,6 +614,7 @@
       isoWeekKey: isoWeekKey,
       buildClientAction: buildClientAction,
       collectDirectClientActions: collectDirectClientActions,
+      computeParkState: computeParkState,
       pathwayShortLabel: pathwayShortLabel,
       pathwayLabelWithWeek: pathwayLabelWithWeek,
       flattenActivePathways: flattenActivePathways

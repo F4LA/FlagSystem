@@ -75,7 +75,9 @@
     window.SheetsReader.loadAll()
       .then(function (data) {
         var states = window.StateBuilder.buildAll(data);
-        var queue = window.QueueBuilder.build(states, data.hcActions);
+        var queue = window.QueueBuilder.build(states, data.hcActions, {
+          formResponses: data.formResponses
+        });
 
         // Cache for cross-tab use and deep linking.
         state.lastData = data;
