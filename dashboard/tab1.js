@@ -733,7 +733,7 @@
 
     // Determine severity tone for the bar.
     var sevClass = "sev-yellow";
-    if (row.latestActionType === "HC Call: Did Not Resolve") sevClass = "sev-red";
+    if (row.latestActionType === "HC Call: Did Not Resolve" || row.blackFlagDue) sevClass = "sev-red";
 
     var html = '<div class="action-row ' + sevClass + (parked ? " is-parked" : "") +
                '" data-direct-idx="' + idx + '">';
@@ -901,6 +901,17 @@
         var directRow = queue.directActions[idx];
         var btnSpec = directRow.buttons[bIdx];
 
+        // Black Flag (single:true) is the final escalation and a client-level
+        // event: confirm first, and log it ONCE — never fan out per pathway
+        // (that would create multiple black flags needing multiple 6-week
+        // clears). The Direct Client Actions filter excludes black-flagged
+        // clients, so a single trigger removes the whole client from here.
+        if (btnSpec.single) {
+          var ok = window.confirm("Trigger Black Flag for " + directRow.client +
+            "? This is the final escalation step.");
+          if (!ok) return;
+        }
+
         // Build payload. For HC Email: Sent we add a follow-up due date
         // 3 days out per the standards' 3-day rule.
         var followUpDate = null;
@@ -910,14 +921,15 @@
           followUpDate = d.toISOString();
         }
 
-        // Lockstep fan-out: log this action against EVERY Post-Red pathway for
-        // the client, so the engine (which tracks Post-Red per pathway) moves
-        // them all together. One HC click = one real-world action covering the
-        // whole client. This writes the exact same per-pathway rows the HC
-        // would have logged one by one before consolidation.
-        var pathways = (directRow.pathways && directRow.pathways.length)
-          ? directRow.pathways
-          : [{ pathway: directRow.pathway || "Post-Red", standard: directRow.standard || null }];
+        // single:true → one client-level row. Otherwise lockstep fan-out: log
+        // against EVERY Post-Red pathway so the engine (which tracks post-red
+        // per pathway) advances them together. One HC click = one real-world
+        // action covering the whole client.
+        var pathways = btnSpec.single
+          ? [{ pathway: directRow.pathway || "Post-Red", standard: null }]
+          : ((directRow.pathways && directRow.pathways.length)
+              ? directRow.pathways
+              : [{ pathway: directRow.pathway || "Post-Red", standard: directRow.standard || null }]);
 
         var payloads = pathways.map(function (p) {
           return {

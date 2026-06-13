@@ -329,8 +329,32 @@
              note: "Improving since coach call (" + qbFmtDate(callDate) + ")" };
   }
 
+  // Detect the "no response after 5 days" Black Flag condition (Overview
+  // Outcome 2). Returns { due, days }. True when the client is still waiting on
+  // the HC email (latest action is HC Email: Sent/Follow-up) and 5+ days have
+  // passed since the FIRST HC email with no response logged (a response would
+  // have advanced the chain to HC Call: Scheduled). Detection only — the HC
+  // confirms the trigger; nothing fires automatically.
+  var BLACK_FLAG_DUE_DAYS = 5;
+  function computeBlackFlagDue(latest, clientActions, now) {
+    if (!latest) return { due: false, days: 0 };
+    if (latest.actionType !== "HC Email: Sent" &&
+        latest.actionType !== "HC Email: Follow-up") return { due: false, days: 0 };
+    var emails = (clientActions || []).filter(function (a) {
+      return a.actionType === "HC Email: Sent" && a.timestamp;
+    }).sort(function (a, b) { return a.timestamp.getTime() - b.timestamp.getTime(); });
+    if (!emails.length) return { due: false, days: 0 };
+    var days = Math.floor(((now || new Date()).getTime() - emails[0].timestamp.getTime()) / 86400000);
+    return { due: days >= BLACK_FLAG_DUE_DAYS, days: days };
+  }
+
   // ---------- Direct Client Actions (Post-Red) ----------
   function collectDirectClientActions(state, hcActions, formResponses, now) {
+    // Black-flagged clients are managed in Tab 4, not here. This also lets the
+    // single Black Flag: Triggered action remove a client from this section
+    // even though the engine tracks post-red per pathway.
+    if (state.blackFlags && state.blackFlags.active) return [];
+
     var clientActions = (hcActions || []).filter(function (a) {
       return a.client && state.clientName &&
         a.client.toLowerCase().trim() === state.clientName.toLowerCase().trim();
@@ -388,7 +412,7 @@
           ];
         case "HC Call: Did Not Resolve":
           return [
-            { label: "Trigger Black Flag", actionType: "Black Flag: Triggered", primary: true }
+            { label: "Trigger Black Flag", actionType: "Black Flag: Triggered", primary: true, single: true }
           ];
         default:
           return [];
@@ -469,6 +493,18 @@
     // Grace / park: should the HC-email prompt be suppressed this week?
     var park = computeParkState(state, postRed, formResponses, clientActions, now);
 
+    // No-response Black Flag (Overview Outcome 2). When due, surface the
+    // Trigger button (single:true → logged ONCE per client, not per pathway)
+    // plus a "Mark client responded" escape hatch in case they actually replied.
+    var bfDue = computeBlackFlagDue(latest, clientActions, now);
+    var contextLine = bfDue.due
+      ? "No response — Black Flag due (Day " + bfDue.days + ")"
+      : describeContext(latest);
+    var buttons = bfDue.due
+      ? [ { label: "Trigger Black Flag", actionType: "Black Flag: Triggered", primary: true, single: true },
+          { label: "Mark client responded", actionType: "HC Call: Scheduled" } ]
+      : buttonsForLatest(latest);
+
     rows.push({
       kind: "direct-client",
       client: state.clientName,
@@ -480,8 +516,9 @@
       standard: postRed[0].standard,
       pathways: postRed,            // all Post-Red pathways (fan-out + brief)
       pathwayLabel: pathwayLabel,
-      contextLine: describeContext(latest),
-      buttons: buttonsForLatest(latest),
+      contextLine: contextLine,
+      buttons: buttons,
+      blackFlagDue: bfDue.due,
       latestActionType: latest ? latest.actionType : null,
       clientActions: clientActions  // full HC action history for the brief
     });
