@@ -26,6 +26,11 @@
   // grace shows "Parked" here instead of a misleading "action pending".
   var parkedMap = Object.create(null);
 
+  // Map clientNameLower -> "evaluable"|"exempt"|"missing" for the most recent
+  // closed coaching week. Built from form responses in render(); powers the
+  // "Missing Submission" filter and an accurate "This Week" column.
+  var weekStatusMap = Object.create(null);
+
   // ---------- HTML escape ----------
   function esc(s) {
     if (s === null || s === undefined) return "";
@@ -75,11 +80,63 @@
     return Object.keys(out);
   }
 
+  // ---------- Post-Red detection ----------
+  function isPostRed(state) {
+    var ps = state.pathwayStates || {};
+    function pr(e) {
+      return e && (e.colorReason === "post-red-tracking" ||
+                   e.colorReason === "red-window-call-asked");
+    }
+    if (pr(ps.p1)) return true;
+    if ((ps.p2 || []).some(pr)) return true;
+    if (pr(ps.p3)) return true;
+    return false;
+  }
+
+  // ---------- Most-recent-week status map ----------
+  // For the most recent CLOSED coaching week (Thu–Wed), classify each roster
+  // client as evaluable (submitted) / exempt / missing. Read-only over form
+  // responses + the engine's CoachingWeek helper — no timeline rebuild.
+  function computeWeekStatusMap(states, formResponses) {
+    var map = Object.create(null);
+    (states || []).forEach(function (s) {
+      map[String(s.clientName || "").toLowerCase().trim()] = "missing";
+    });
+    if (!Array.isArray(formResponses) || !root.CoachingWeek) return map;
+    var range;
+    try {
+      var closed = root.CoachingWeek.closedCoachingWeek(new Date());
+      range = root.CoachingWeek.coachingWeekRange(closed);
+    } catch (e) { return map; }
+    var start = range.start.getTime(), end = range.end.getTime();
+    formResponses.forEach(function (r) {
+      if (!r || !r[0] || !r[1]) return;
+      var t = new Date(r[0]).getTime();
+      if (isNaN(t) || t < start || t > end) return;
+      var key = String(r[1]).toLowerCase().trim();
+      if (!(key in map)) return; // roster clients only
+      var exempt = String(r[2] || "").trim().toLowerCase() === "yes";
+      if (exempt) {
+        if (map[key] === "missing") map[key] = "exempt";
+      } else {
+        map[key] = "evaluable"; // a real submission wins
+      }
+    });
+    return map;
+  }
+
   // ---------- This Week status ----------
   // The lastEvaluableWeek/evaluatedAtWeek represent the most recent
   // closed coaching week. If status === "evaluable" → Submitted.
   // exempt → Exempt. missing/no data → Missing.
   function thisWeekStatus(state) {
+    // Prefer the accurate per-week status (distinguishes Exempt from Missing).
+    var mapped = weekStatusMap[String(state.clientName || "").toLowerCase().trim()];
+    if (mapped === "evaluable") return { label: "Submitted", symbol: "✓", cssClass: "tw-submitted" };
+    if (mapped === "exempt") return { label: "Exempt", symbol: "—", cssClass: "tw-other" };
+    if (mapped === "missing") return { label: "Missing", symbol: "⚠️", cssClass: "tw-missing" };
+
+    // Fallback to the state-only heuristic if the map isn't available.
     var lw = state.lastEvaluableWeek;
     if (!lw) {
       // No evaluable week at all in the window.
@@ -184,8 +241,8 @@
   function specialStatus(state) {
     var out = [];
     if (state.blackFlags && state.blackFlags.active) out.push("Black flag");
-    // We don't surface Exempt or Missing Data here at row-level because
-    // "This Week" already shows that signal. Keep this for true outliers.
+    if (isPostRed(state)) out.push("Post-Red");
+    // Exempt/Missing are surfaced in the "This Week" column, not here.
     return out;
   }
 
@@ -194,7 +251,7 @@
     colors: { Red: false, Yellow: false, Green: false },
     coach: "",
     pathways: { P1: false, P2: false, P3: false },
-    special: { black: false },
+    special: { black: false, postRed: false, missing: false },
     search: ""
   };
 
@@ -217,8 +274,11 @@
       if (!hit) return false;
     }
 
-    // Special filter
+    // Special filters
     if (filters.special.black && !(state.blackFlags && state.blackFlags.active)) return false;
+    if (filters.special.postRed && !isPostRed(state)) return false;
+    if (filters.special.missing &&
+        weekStatusMap[String(state.clientName || "").toLowerCase().trim()] !== "missing") return false;
 
     // Search
     if (filters.search) {
@@ -285,6 +345,10 @@
     html += '<div class="roster-chip-group" data-group="special">';
     var blackActive = filters.special.black ? " is-active" : "";
     html += '<button type="button" class="roster-chip chip-black' + blackActive + '" data-special="black">Black flag</button>';
+    var postRedActive = filters.special.postRed ? " is-active" : "";
+    html += '<button type="button" class="roster-chip chip-special' + postRedActive + '" data-special="postRed">Post-Red</button>';
+    var missingActive = filters.special.missing ? " is-active" : "";
+    html += '<button type="button" class="roster-chip chip-special' + missingActive + '" data-special="missing">Missing</button>';
     html += '</div>';
 
     // Count
@@ -336,7 +400,10 @@
       }
       var special = specialStatus(s);
       var specialHtml = special.length > 0 ?
-        special.map(function (x) { return '<span class="status-badge ' + (x === "Black flag" ? "sb-black" : "") + '">' + esc(x) + '</span>'; }).join("") :
+        special.map(function (x) {
+          var cls = x === "Black flag" ? "sb-black" : (x === "Post-Red" ? "sb-postred" : "");
+          return '<span class="status-badge ' + cls + '">' + esc(x) + '</span>';
+        }).join("") :
         '<span class="rt-dim">—</span>';
 
       var colorBadge = '<span class="rt-color-badge rt-color-' + s.color.toLowerCase() + '">' + esc(s.color) + '</span>';
@@ -360,6 +427,7 @@
   function render(states, hcActions, ctx) {
     ctx = ctx || {};
     parkedMap = ctx.parkedByClient || Object.create(null);
+    weekStatusMap = computeWeekStatusMap(states, ctx.formResponses);
     var rootEl = document.getElementById("roster-content");
     if (!rootEl) return;
 
@@ -485,6 +553,10 @@
 
   // ---------- Public ----------
   root.Tab2 = {
-    render: render
+    render: render,
+    _internal: {
+      isPostRed: isPostRed,
+      computeWeekStatusMap: computeWeekStatusMap
+    }
   };
 })(typeof window !== "undefined" ? window : this);

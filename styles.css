@@ -911,6 +911,10 @@ button { font-family: inherit; }
   background: var(--navy-900);
   color: #fff;
 }
+.status-badge.sb-postred {
+  background: var(--steel-600);
+  color: #fff;
+}
 
 /* This-week status */
 .tw-submitted { color: var(--green); font-weight: 600; }
@@ -992,6 +996,7 @@ button { font-family: inherit; }
 .roster-chip.chip-yellow.is-active { background: var(--yellow); border-color: var(--yellow); }
 .roster-chip.chip-green.is-active  { background: var(--green);  border-color: var(--green); }
 .roster-chip.chip-black.is-active  { background: var(--navy-900); border-color: var(--navy-900); }
+.roster-chip.chip-special.is-active { background: var(--steel-600); border-color: var(--steel-600); }
 
 .roster-count {
   margin-left: auto;
