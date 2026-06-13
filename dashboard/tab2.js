@@ -22,6 +22,10 @@
 (function (root) {
   "use strict";
 
+  // Map of parked clients (set from ctx in render) so a Post-Red client in
+  // grace shows "Parked" here instead of a misleading "action pending".
+  var parkedMap = Object.create(null);
+
   // ---------- HTML escape ----------
   function esc(s) {
     if (s === null || s === undefined) return "";
@@ -318,6 +322,18 @@
 
       var tw = thisWeekStatus(s);
       var ap = actionPending(s, hcActions, currentWeek);
+      // If the client is parked (Post-Red grace), reflect that here instead of
+      // a misleading "action pending" — keeps Tab 2 consistent with Tab 1.
+      var parkedHere = parkedMap[String(s.clientName || "").toLowerCase().trim()];
+      if (parkedHere) {
+        var pLabel = "Parked";
+        if (parkedHere.until instanceof Date && !isNaN(parkedHere.until.getTime())) {
+          pLabel = "Parked until " + parkedHere.until.toLocaleDateString("en-US", {
+            month: "short", day: "numeric", timeZone: "America/New_York"
+          });
+        }
+        ap = { label: pLabel, cssClass: "rt-dim" };
+      }
       var special = specialStatus(s);
       var specialHtml = special.length > 0 ?
         special.map(function (x) { return '<span class="status-badge ' + (x === "Black flag" ? "sb-black" : "") + '">' + esc(x) + '</span>'; }).join("") :
@@ -343,6 +359,7 @@
   // ---------- Main render ----------
   function render(states, hcActions, ctx) {
     ctx = ctx || {};
+    parkedMap = ctx.parkedByClient || Object.create(null);
     var rootEl = document.getElementById("roster-content");
     if (!rootEl) return;
 

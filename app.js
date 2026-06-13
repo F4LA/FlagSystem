@@ -85,13 +85,27 @@
         state.lastQueue = queue;
 
         // Tab 1 (existing). Pass formResponses so the Slack modal can show
-        // the client's most-recent coach note(s) alongside the message.
-        window.Tab1.render(queue, { formResponses: data.formResponses });
+        // the client's most-recent coach note(s) alongside the message,
+        // and onActionLogged so Park/Unpark can refresh the view.
+        window.Tab1.render(queue, {
+          formResponses: data.formResponses,
+          onActionLogged: refresh
+        });
+
+        // Map of parked clients (from the queue) so Tab 2 can stay consistent
+        // with Tab 1 instead of showing them as "action pending".
+        var parkedByClient = Object.create(null);
+        queue.directActions.forEach(function (r) {
+          if (r.park && r.park.parked) {
+            parkedByClient[String(r.client).toLowerCase().trim()] = r.park;
+          }
+        });
 
         // Tabs 2/3/4 (v1.1). Shared context.
         var sharedCtx = {
           formResponses: data.formResponses,
           currentWeek: queue.currentWeek,
+          parkedByClient: parkedByClient,
           onActionLogged: refresh
         };
         if (window.Tab2 && typeof window.Tab2.render === "function") {

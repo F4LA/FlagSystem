@@ -454,7 +454,9 @@
       .filter(function (a) {
         return a && a.timestamp && a.actionType &&
                a.actionType.indexOf("Slack:") !== 0 &&
-               a.actionType.indexOf("Coach Audit Note") !== 0;
+               a.actionType.indexOf("Coach Audit Note") !== 0 &&
+               a.actionType !== PARK_ACTION &&
+               a.actionType !== UNPARK_ACTION;
       })
       .sort(function (a, b) {
         return b.timestamp.getTime() - a.timestamp.getTime();

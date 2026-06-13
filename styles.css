@@ -768,6 +768,31 @@ button { font-family: inherit; }
   font-size: 13px;
 }
 
+/* ---------- Park modal (Post-Red grace override) ---------- */
+.park-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 12px 0 6px;
+}
+.park-date-input {
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+}
+.park-date-input:focus {
+  outline: none;
+  border-color: var(--steel-400);
+  background: var(--surface);
+}
+
 /* ---------- Direct Client Actions: parked (Post-Red grace) ---------- */
 .action-row.is-parked {
   opacity: 0.6;

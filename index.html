@@ -135,6 +135,27 @@
     </div>
   </div>
 
+  <!-- Park (Post-Red grace override) modal (Tab 1) -->
+  <div class="modal-backdrop hidden" id="park-modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="park-modal-title">
+      <header class="modal-header">
+        <h2 id="park-modal-title">Park client</h2>
+        <button class="modal-close" type="button" id="park-modal-close" aria-label="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-meta" id="park-modal-meta"></p>
+        <label class="park-label" for="park-modal-date">Hold the HC email until</label>
+        <input type="date" id="park-modal-date" class="park-date-input">
+        <label class="park-label" for="park-modal-note">Note (optional)</label>
+        <textarea class="modal-textarea" id="park-modal-note" rows="3" spellcheck="true"
+                  placeholder="e.g. Coach call scheduled — give it a week"></textarea>
+      </div>
+      <footer class="modal-footer">
+        <button class="btn btn-primary" type="button" id="park-modal-save">Park</button>
+      </footer>
+    </div>
+  </div>
+
   <!-- Toast container -->
   <div class="toast-container" id="toast-container" aria-live="polite"></div>
 

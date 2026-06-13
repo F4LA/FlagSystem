@@ -25,6 +25,9 @@
   // surface their most-recent coach note(s). Engine is only READ here (via
   // ClientTimeline.buildClientTimeline), never modified.
   var currentFormResponses = [];
+  // For logging Park/Unpark actions and refreshing after.
+  var currentActionWeek = null;
+  var currentOnActionLogged = null;
 
   // Default lookback for the note timeline (matches FlagConfig.LOOKBACK_WEEKS).
   var NOTE_LOOKBACK_WEEKS =
@@ -366,6 +369,111 @@
     });
   }
 
+  // ---------- Park / Unpark (manual grace override) ----------
+  //
+  // The HC's fallback for the auto-grace: park a client (suppress the email
+  // prompt) until a chosen date, with a note. Logged as an inert "HC: Park"
+  // action the engine ignores. "Reactivate" logs "HC: Unpark".
+  var parkModalState = { client: null, coach: null, pathway: null };
+
+  function openParkModal(directRow) {
+    parkModalState.client = directRow.client;
+    parkModalState.coach = directRow.coach;
+    parkModalState.pathway = directRow.pathway || "Post-Red";
+    document.getElementById("park-modal-meta").textContent =
+      directRow.client + (directRow.coach ? " · " + directRow.coach : "");
+    document.getElementById("park-modal-date").value = "";
+    document.getElementById("park-modal-note").value = "";
+    document.getElementById("park-modal-backdrop").classList.remove("hidden");
+    document.getElementById("park-modal-date").focus();
+  }
+
+  function closeParkModal() {
+    document.getElementById("park-modal-backdrop").classList.add("hidden");
+  }
+
+  function logParkAction(actionType, untilISO, note, onOk, onErr) {
+    var payload = {
+      client: parkModalState.client,
+      coach: parkModalState.coach,
+      pathway: parkModalState.pathway,
+      standard: null,
+      actionType: actionType,
+      notes: note || null,
+      outcome: null,
+      followUpDueDate: untilISO || null,
+      actionWeek: currentActionWeek
+    };
+    root.ActionsWriter.logAction(payload).then(onOk).catch(onErr);
+  }
+
+  function wireParkModal() {
+    var close = document.getElementById("park-modal-close");
+    if (close) close.addEventListener("click", closeParkModal);
+    var bd = document.getElementById("park-modal-backdrop");
+    if (bd) {
+      bd.addEventListener("click", function (e) {
+        if (e.target.id === "park-modal-backdrop") closeParkModal();
+      });
+    }
+    var save = document.getElementById("park-modal-save");
+    if (save) {
+      save.addEventListener("click", function () {
+        var dateVal = document.getElementById("park-modal-date").value; // "YYYY-MM-DD"
+        if (!dateVal) { toast("Pick a date to park until.", "error"); return; }
+        var note = document.getElementById("park-modal-note").value || "";
+        // Local noon avoids a UTC off-by-one on the date.
+        var untilISO = new Date(dateVal + "T12:00:00").toISOString();
+        save.disabled = true;
+        save.textContent = "Parking…";
+        logParkAction("HC: Park", untilISO, note,
+          function () {
+            toast("Parked: " + parkModalState.client, "success");
+            save.disabled = false; save.textContent = "Park";
+            closeParkModal();
+            if (typeof currentOnActionLogged === "function") currentOnActionLogged();
+          },
+          function (err) {
+            save.disabled = false; save.textContent = "Park";
+            toast("Failed to park: " + err.message, "error");
+          });
+      });
+    }
+  }
+
+  function wireParkButtons(queue) {
+    document.querySelectorAll(".js-park-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".action-row");
+        var idx = parseInt(row.getAttribute("data-direct-idx"), 10);
+        var dr = queue.directActions[idx];
+        if (dr) openParkModal(dr);
+      });
+    });
+    document.querySelectorAll(".js-unpark-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var row = btn.closest(".action-row");
+        var idx = parseInt(row.getAttribute("data-direct-idx"), 10);
+        var dr = queue.directActions[idx];
+        if (!dr) return;
+        parkModalState.client = dr.client;
+        parkModalState.coach = dr.coach;
+        parkModalState.pathway = dr.pathway || "Post-Red";
+        btn.disabled = true;
+        btn.textContent = "…";
+        logParkAction("HC: Unpark", null, null,
+          function () {
+            toast("Reactivated: " + dr.client, "success");
+            if (typeof currentOnActionLogged === "function") currentOnActionLogged();
+          },
+          function (err) {
+            btn.disabled = false; btn.textContent = "Reactivate";
+            toast("Failed: " + err.message, "error");
+          });
+      });
+    });
+  }
+
   // ---------- Modal ----------
   var modalState = {
     open: false,
@@ -481,6 +589,8 @@
 
     // Cache raw form responses so the Slack modal can surface coach notes.
     if (ctx.formResponses) currentFormResponses = ctx.formResponses;
+    currentActionWeek = queue.currentWeek;
+    if (ctx.onActionLogged) currentOnActionLogged = ctx.onActionLogged;
 
     var weekLabel = weekRangeLabel(queue.queueWeekStart, queue.queueWeekEnd);
 
@@ -556,6 +666,7 @@
     wireSlackButtons(queue);
     wireDirectButtons(queue, ctx);
     wireBriefButtons(queue);
+    wireParkButtons(queue);
   }
 
   function statBox(value, label) {
@@ -649,11 +760,14 @@
     html += '<button class="action-btn js-brief-btn" type="button">Situation</button>';
     // While parked (coach call in its grace window), suppress the chain
     // buttons — the email prompt returns automatically when grace ends.
-    if (!parked) {
+    if (parked) {
+      html += '<button class="action-btn js-unpark-btn" type="button">Reactivate</button>';
+    } else {
       row.buttons.forEach(function (b, bi) {
         var cls = b.primary ? "action-btn action-btn-primary" : "action-btn";
         html += '<button class="' + cls + ' js-direct-btn" data-btn-idx="' + bi + '" type="button">' + esc(b.label) + '</button>';
       });
+      html += '<button class="action-btn js-park-btn" type="button">Park</button>';
     }
     html += '</div></div>';
     return html;
@@ -844,6 +958,7 @@
   function init() {
     wireModal();
     wireBriefModal();
+    wireParkModal();
   }
 
   root.Tab1 = {
